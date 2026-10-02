@@ -296,3 +296,32 @@ body{position:fixed;inset:0}
 .quotebar span{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .quotebar[hidden]{display:none}
 .msg.flash .bubble{outline:3px solid var(--accent)}
+
+/* ===== 字号跟随主题设置 ===== */
+/* 原来写死的像素字号改成按 --font-size 换算，默认 15px 时和原来一样大 */
+#phone{--fs:var(--font-size,15px)}
+#statusbar{font-size:calc(var(--fs) * .93)}
+.topbar .title{font-size:calc(var(--fs) * 1.2)}
+.btn{font-size:calc(var(--fs) * .93)}
+.btn.sm{font-size:calc(var(--fs) * .8)}
+h3{font-size:calc(var(--fs) * 1.07)}
+label{font-size:calc(var(--fs) * .87)}
+.hint,.item small,.row .sub{font-size:calc(var(--fs) * .8)}
+.item{font-size:var(--fs)}
+.bubble{font-size:var(--fs)}
+.sender,.tsep,.timesep{font-size:calc(var(--fs) * .73)}
+.typing,.ignore{font-size:calc(var(--fs) * .8)}
+.vtext,.voice .vtext{font-size:calc(var(--fs) * .87)}
+.app .name{font-size:calc(var(--fs) * .87)}
+.toast{font-size:calc(var(--fs) * .93)}
+.peekbar{font-size:calc(var(--fs) * .87)}
+.mo-cmts{font-size:calc(var(--fs) * .87)}
+.persona-text,.font-demo{font-size:calc(var(--fs) * .87)}
+.rd-page{font-size:var(--fs)}
+.tf-note{font-size:calc(var(--fs) * .87)}
+.tf-st{font-size:calc(var(--fs) * .73)}
+.quotebar{font-size:calc(var(--fs) * .8)}
+.pet-bar,.pet-log{font-size:calc(var(--fs) * .87)}
+/* 输入框保持至少 16px，避免 iOS 点输入框时页面自动放大 */
+input,textarea,select,.inputbar textarea{font-size:max(16px,var(--fs))}
+
