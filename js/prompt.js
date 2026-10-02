@@ -147,12 +147,14 @@ const Prompt = {
 
    typed(s) { return Media.parseItem(s); },
 
-    line(m, pid) {
+      // list 有值时带上消息编号和引用，给群聊、私聊、共读用
+  line(m, pid, list = null) {
     const n = senderName(m, pid);
     if (m.type === 'ignore') return `（${n}已读未回：${m.content}）`;
     if (m.type === 'sys') return `（${m.content}）`;
-       const sa = Lang.sentAs(m);
-    return `${n}：${Lang.body(m, pid)}${sa ? `（实际是用${sa}发的）` : ''}`;
+    const sa = Lang.sentAs(m);
+    const head = list ? `[#${Quote.code(m)}] ` : '', ref = list ? Quote.ref(m, list, pid) : '';
+    return `${head}${n}：${ref}${Lang.body(m, pid)}${sa ? `（实际是用${sa}发的）` : ''}`;
   },
 
   // 某个角色最近 24 小时在其他会话里的聊天
@@ -200,6 +202,7 @@ const Prompt = {
     const r = ['【功能格式】（必须遵守）', '- 每条消息单独一行，不要在消息前加名字。', '- 发语音：单独一行写 [语音]语音里说的话'];
     if (S.settings.chat.allowIgnore) r.push('- 已读不回：只有当{{角色}}此刻确实不会回复时（在忙、睡着了、在生气、故意晾着对方等），整段回复只写一行 [不回]原因。原因用旁观者视角简短描述，比如：在开会，瞄了一眼手机又放下了。大部分时候应该正常回复。');
     if (known) r.push(`- 私下找别人：如果聊到的内容让{{角色}}想私下联系某个认识的人，另起一行写 [私聊]对方名字：想找对方聊的原因。这一行对方看不到。可以找的人：${known}。不要频繁使用。`);
+        r.push(Quote.RULE);
         r.push(Media.rules());
 return r.join('\n');
   },
@@ -256,8 +259,9 @@ return r.join('\n');
       if (gap) msgs.push({ role: 'user', content: gap });
       msgs.push(m.type === 'ignore'
         ? { role: 'user', content: `（${ch.name}当时已读未回：${m.content}）` }
-                       : { role: m.sender === 'user' ? 'user' : 'assistant',
-            content: Lang.sentAs(m) ? `${Lang.body(m, pid)}（${p.name}这条实际是用${Lang.sentAs(m)}发的）` : Lang.body(m, pid) });
+                             : { role: m.sender === 'user' ? 'user' : 'assistant',
+            content: `[#${Quote.code(m)}] ${Quote.ref(m, all, pid)}` +
+              (Lang.sentAs(m) ? `${Lang.body(m, pid)}（${p.name}这条实际是用${Lang.sentAs(m)}发的）` : Lang.body(m, pid)) });
     });
     this.entries('dm', 'depth').sort((a, b) => b.depth - a.depth).forEach(e => {
       const c = this.render(e, vars);
@@ -296,6 +300,7 @@ return r.join('\n');
 ${Media.rules(true, p.name)}
 ${Lang.groupRule(members, p)}
 - @某人：在内容里写 @名字
+${Quote.RULE}
 - 如果聊天让某个成员想私下找人聊（{{用户}}或他认识的其他人），另起一行写：[私聊]成员名→对方名字：原因。这一行不会显示在群里，偶尔使用。
 - 不写旁白、动作和心理描写。
 ${GroupAdmin.rules(g, members)}`;
@@ -314,7 +319,7 @@ ${GroupAdmin.rules(g, members)}`;
     if (lt) tail.push(lt);
 
     // 聊天记录按每 10 条切块，前面完整的块走缓存
-    const lines = hist.map((m, k) => (this.gapNote(hist[k - 1], m) ? this.gapNote(hist[k - 1], m) + '\n' : '') + this.line(m, pid));
+    const lines = hist.map((m, k) => (this.gapNote(hist[k - 1], m) ? this.gapNote(hist[k - 1], m) + '\n' : '') + this.line(m, pid, all));
     const cut = S.settings.cache?.enabled ? Math.floor(lines.length / 10) * 10 : 0;
     const head = lines.slice(0, cut).join('\n'), rest = lines.slice(cut).join('\n');
     const content = [];
@@ -350,14 +355,15 @@ ${GroupAdmin.rules(g, members)}`;
     const rec = await this.recentMulti([a, b], pid, convId);
     if (rec) block.push(`【两人最近在别处的聊天】\n${rec}`);
     block.push(...this.styleBlocks(pid, `${a.name}、${b.name}`));
-    block.push(`【要求】
+        block.push(`【要求】
 - 只写两人发出的消息，每行一条，格式：名字：内容。名字只能是${a.name}或${b.name}。
 - 像真人聊天：多数是短句，可以连发，偶尔有长消息。不写旁白、动作和心理描写。
 - 注意信息差：每个人只知道自己参与过的聊天和自己的记忆。
 - 一共 4 到 14 条，聊到自然结束或暂时告一段落。
 - 发语音：名字：[语音]语音里说的话
-${Media.rules(true)}`);
-    const log = hist.map((m, k) => (this.gapNote(hist[k - 1], m) ? this.gapNote(hist[k - 1], m) + '\n' : '') + this.line(m, pid)).join('\n');
+${Media.rules(true)}
+${Quote.RULE}`);
+    const log = hist.map((m, k) => (this.gapNote(hist[k - 1], m) ? this.gapNote(hist[k - 1], m) + '\n' : '') + this.line(m, pid, hist)).join('\n');
     const task = `${log ? '【之前的聊天】\n' + log + '\n\n' : ''}现在是${nowText(now)}。${reason
       ? `这次是${a.name}主动找${b.name}，原因：${reason}。`
       : '由其中一人自然地发起话题，可以是日常分享、延续之前的事，或者聊到共同认识的人。'}\n请写出这段私聊。`;
@@ -369,13 +375,14 @@ ${Media.rules(true)}`);
     const nameRe = new RegExp('^[【\\[]?' + escRe(ch.name) + '[】\\]]?\\s*[:：]\\s*');
     const out = { msgs: [], intents: [], ignore: null, skip: false };
     for (let l of String(text).split(/\n+/)) {
-      l = l.trim().replace(nameRe, '');
+      l = l.trim().replace(Quote.TAG, '').replace(nameRe, '').replace(Quote.TAG, '');
       if (!l || /^[-—*_=]{3,}$/.test(l)) continue;
       let m;
       if (/^\[不发\]/.test(l)) { out.skip = true; continue; }
       if ((m = l.match(/^\[不回\]\s*(.*)$/))) { out.ignore = m[1].trim() || '看了一眼，没有回'; continue; }
       if ((m = l.match(/^\[私聊\]\s*(.+?)\s*[:：]\s*(.+)$/))) { out.intents.push({ to: m[1].replace(/^@/, ''), reason: m[2] }); continue; }
-      out.msgs.push(this.typed(l));
+            const q = Quote.take(l);
+      out.msgs.push({ ...this.typed(q.rest), ...(q.code ? { quote: q.code } : {}) });
     }
     if (out.msgs.length) { out.ignore = null; out.skip = false; }
     return out;
@@ -404,16 +411,18 @@ ${Media.rules(true)}`);
   parseLines(text, names, { cmds = false } = {}) {
     const msgs = [], intents = [];
     for (let l of String(text).split(/\n+/)) {
-      l = l.trim().replace(/^[*\-•]\s*/, '');
+      l = l.trim().replace(/^[*\-•]\s*/, '').replace(Quote.TAG, '');
       if (!l || /^[-—*_=]{3,}$/.test(l)) continue;
       const it = l.match(/^\[私聊\]\s*(.+?)\s*(?:→|->|=>|>)\s*(.+?)\s*[:：]\s*(.+)$/);
       if (it) { intents.push({ from: this.matchName(names, it[1]) || it[1].trim(), to: it[2].trim().replace(/^@/, ''), reason: it[3] }); continue; }
       const mm = l.match(/^[【\[]?(.{1,24}?)[】\]]?\s*[:：]\s*(.+)$/);
       const name = mm && this.matchName(names, mm[1]);
-      if (name) {
-        const cmd = cmds && GroupAdmin.parse(mm[2]);
-        msgs.push(cmd ? { name, cmd, type: 'sys', content: '' } : { name, ...this.typed(mm[2]) });
-      } else if (mm && !/[，。！？、,.!?]/.test(mm[1])) {
+           if (name) {
+        const q = Quote.take(mm[2]);
+        const cmd = cmds && GroupAdmin.parse(q.rest);
+        msgs.push(cmd ? { name, cmd, type: 'sys', content: '' } : { name, ...this.typed(q.rest), quote: q.code });
+      }
+ else if (mm && !/[，。！？、,.!?]/.test(mm[1])) {
         // 看起来是"名字：内容"但名字对不上，宁可丢掉也不要错归给别人
         Log.add('群聊里有对不上的名字：' + mm[1].trim(), '检查角色名字是否和 AI 写的一致（简繁体、异体字）');
       } else if (msgs.length) {
@@ -422,4 +431,24 @@ ${Media.rules(true)}`);
     }
     return { msgs, intents };
   },
+};
+
+// ===== 引用 =====
+const Quote = {
+  code: m => String(m.id).slice(-4),
+  // AI 输出的 [引用#ab12]，后面允许带点多余内容
+  RE: /^\[引用\s*[#＃]?\s*([0-9a-z]{4})[^\]]*\]\s*/i,
+  // AI 模仿记录格式给自己的消息写编号，直接去掉
+  TAG: /^\[#[0-9a-z]{4}\]\s*/i,
+  take(s) {
+    const m = String(s).match(this.RE);
+    return m ? { code: m[1].toLowerCase(), rest: String(s).slice(m[0].length) } : { code: '', rest: String(s) };
+  },
+  // 给 AI 看的引用说明
+  ref(m, list, pid) {
+    if (!m.quote) return '';
+    const q = list.find(x => x.id === m.quote);
+    return q ? `[引用#${this.code(q)}：${Lang.body(q, pid).slice(0, 20)}]` : '[引用了一条已删除的消息]';
+  },
+  RULE: `- 引用：只有在要回复前面某条特定消息、而且不引用会搞混时才用（比如对方连发了几件不同的事、隔了好几条才回、群里同时有几个话题）。格式是在消息内容最前面写 [引用#编号]，编号就是聊天记录里每条消息前的 [#xxxx]。也可以引用自己之前说的话来补充。大部分消息不需要引用，接着回刚才那条时绝对不要引用，一轮最多一两次。不要给自己发的消息写编号。`,
 };

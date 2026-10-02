@@ -289,3 +289,10 @@ body{position:fixed;inset:0}
 /* 开了「译」模式但单独设为原文的消息 */
 .me .bubble.raw{background:var(--panel);border-style:dashed}
 
+/* 引用 */
+.qt{font-size:.8em;opacity:.75;padding:2px 6px;margin-bottom:4px;border-left:3px solid var(--border);
+  background:rgba(0,0,0,.06);cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:220px}
+.quotebar{display:flex;align-items:center;gap:6px;padding:4px 8px;font-size:12px;background:var(--them);border-top:2px dashed var(--border)}
+.quotebar span{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.quotebar[hidden]{display:none}
+.msg.flash .bubble{outline:3px solid var(--accent)}

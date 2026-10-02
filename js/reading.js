@@ -92,6 +92,7 @@ const Reading = {
 ${Media.rules(true, p.name)}
 ${Lang.groupRule(members, p)}
 - @某人：在内容里写 @名字
+${Quote.RULE}
 - 如果看书或聊天让某个成员想私下找人聊，另起一行写：[私聊]成员名→对方名字：原因。偶尔使用。
 - 不写旁白、动作和心理描写。`;
     const st = [
@@ -122,7 +123,7 @@ ${Lang.groupRule(members, p)}
     const lt = Lang.groupTail(members, p);
     if (lt) tail += '\n' + lt;
 
-    const lines = hist.map(m => Prompt.line(m, pid));
+    const lines = hist.map(m => Prompt.line(m, pid, all));
     const cut = S.settings.cache?.enabled ? Math.floor(lines.length / 10) * 10 : 0;
     const head = lines.slice(0, cut).join('\n'), rest = lines.slice(cut).join('\n');
     const content = [];
@@ -165,7 +166,7 @@ Gen.read = function (rid, { auto = false } = {}) {
     const { system, messages } = await Reading.buildPrompt(room, convId, auto);
     const r = Prompt.parseLines(await API.claude(system, messages, { maxTokens: 1200 }), members.map(c => c.name));
     const byName = n => members.find(c => c.name === n);
-        await this.post(convId, r.msgs.filter(m => byName(m.name)).map(m => ({ sender: byName(m.name).id, type: m.type, content: m.content })));
+        await this.post(convId, r.msgs.filter(m => byName(m.name)).map(m => ({ sender: byName(m.name).id, type: m.type, content: m.content, quote: m.quote })));
     for (const it of r.intents) {
       const f = byName(it.from);
       if (f) await Social.queueIntent(room.personaId, f.id, it.to, it.reason);
@@ -288,6 +289,7 @@ Views.readRoom = async ({ rid }) => {
       <button class="btn ghost" data-act="next" aria-label="下一页">▶</button></div>
     <div class="cv-msgs" id="msgs"></div>
     <div class="typing" id="typing" ${Gen.busy.has(convId) ? '' : 'hidden'}>有人正在输入…</div>
+<div class="quotebar" id="quotebar" hidden><span></span><button class="btn ghost sm" data-act="unquote" aria-label="取消引用">✕</button></div>
     <div class="inputbar">
       <button class="btn ghost" data-act="media" aria-label="发图片或表情">＋</button>
       <button class="btn ghost" data-act="at" aria-label="艾特">@</button>
@@ -310,6 +312,7 @@ Views.readRoom = async ({ rid }) => {
   };
   draw();
   ChatUI.convId = convId;
+  ChatUI.quoting = null;
   await ChatUI.refresh();
   Reading.startAuto(rid);
 
@@ -327,6 +330,7 @@ Views.readRoom = async ({ rid }) => {
     if (bub) return msgActions(ChatUI.list.find(x => x.id === bub.closest('[data-id]').dataset.id));
 
     const a = e.target.closest('[data-act]')?.dataset.act;
+    if (a === 'unquote') return ChatUI.setQuote(null);
     if (a === 'set') return Router.go('roomEdit', { rid });
     if (a === 'prev') return flip(room.page - 1);
     if (a === 'next') return flip(room.page + 1);
@@ -345,7 +349,9 @@ Views.readRoom = async ({ rid }) => {
       const inp = $('#inp'), text = inp.value.trim();
       if (!text) return;
       inp.value = '';
-      await addMsg(convId, 'user', text);
+            const q = ChatUI.quoting;
+      ChatUI.setQuote(null);
+      await addMsg(convId, 'user', text, 'text', q ? { quote: q.id } : {});
       inp.focus();
     }
     if (a === 'reply') {

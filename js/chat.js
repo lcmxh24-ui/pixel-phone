@@ -9,6 +9,7 @@ const Gen = {
   // 逐条发出。at 有值时是离线补发，时间落在过去；否则模拟打字延迟实时发出
          async post(convId, items, { at = null, batch = uid() } = {}) {
     const ci = Conv.parse(convId);
+    let quoted = 0;
     for (let i = 0; i < items.length; i++) {
       const ts = at ? Math.min(at + i * 15e3, Date.now() - (items.length - i) * 1000) : null;
       // 群里刚被踢出去的人，后面的话不再发出
@@ -26,6 +27,11 @@ const Gen = {
       const extra = { ...(it.extra || {}), batch };
       // 只有文字和语音带译文，转账、系统提示这类不带
       if (sp.trans && ['text', 'voice'].includes(it.type)) extra.trans = sp.trans;
+      // 引用：编号找原消息。引用紧挨着的上一条没意义，一轮最多两次
+      if (items[i].quote && it.type !== 'sys') {
+        const all = await getMsgs(convId), q = all.find(x => x.id.endsWith(items[i].quote));
+        if (q && q.id !== all.at(-1)?.id && quoted < 2) { extra.quote = q.id; quoted++; }
+      }
       if (ts) extra.ts = ts;
       else await sleep(Math.min(500 + it.content.length * 60, 2500));
       await addMsg(convId, it.sender, it.content, it.type, extra);
@@ -73,7 +79,7 @@ const Gen = {
       const { system, messages } = await Prompt.buildGroup(g, convId);
             const r = Prompt.parseLines(await API.claude(system, messages, { maxTokens: 1500 }), members.map(c => c.name), { cmds: true });
       const byName = n => members.find(c => c.name === n);
-            await this.post(convId, r.msgs.filter(m => byName(m.name)).map(m => ({ sender: byName(m.name).id, type: m.type, content: m.content, cmd: m.cmd })), { at });
+            await this.post(convId, r.msgs.filter(m => byName(m.name)).map(m => ({ sender: byName(m.name).id, type: m.type, content: m.content, cmd: m.cmd, quote: m.quote })), { at });
       for (const it of r.intents) {
         const f = byName(it.from);
         if (f) await Social.queueIntent(g.personaId, f.id, it.to, it.reason);
@@ -91,7 +97,7 @@ const Gen = {
       if (from === b.id || (!from && Math.random() < 0.5)) [a, b] = [b, a];
       const { system, messages } = await Prompt.buildCC(a, b, convId, { reason, at });
       const r = Prompt.parseLines(await API.claude(system, messages, { maxTokens: 1500 }), [a.name, b.name]);
-      await this.post(convId, r.msgs.map(m => ({ sender: m.name === a.name ? a.id : b.id, type: m.type, content: m.content })), { at });
+      await this.post(convId, r.msgs.map(m => ({ sender: m.name === a.name ? a.id : b.id, type: m.type, content: m.content, quote: m.quote })), { at });
       return r;
     });
   },
@@ -109,6 +115,26 @@ const Gen = {
 // ===== 聊天界面 =====
 const ChatUI = {
   convId: null,
+  quoting: null,
+  // 输入框上方的引用条，m 为 null 时收起
+  setQuote(m) {
+    this.quoting = m;
+    const b = $('#quotebar');
+    if (!b) return;
+    b.hidden = !m;
+    if (!m) return;
+    const pid = this.ctx(this.convId).pid;
+    $('span', b).textContent = `引用 ${senderName(m, pid)}：${preview(m, false, pid).slice(0, 30)}`;
+    $('#inp')?.focus();
+  },
+  // 点引用跳到原消息
+  jump(id) {
+    const el = $(`#msgs [data-id="${CSS.escape(id)}"]`);
+    if (!el) return toast('原消息不在了');
+    el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    el.classList.add('flash');
+    setTimeout(() => el.classList.remove('flash'), 1200);
+  },
 
   timeLabel(ts) {
     const d = new Date(ts), t = d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
@@ -140,10 +166,12 @@ const ChatUI = {
       : ['image', 'sticker'].includes(m.type) ? Media.render(m) : this.fmt(m.content, pid);
     // 译文：放在 body 整个表达式结束之后
     const tr = m.trans && S.settings.translate?.show !== false ? `<div class="tr">${esc(m.trans)}</div>` : '';
+    const q = m.quote && this.list?.find(x => x.id === m.quote);
+    const qt = m.quote ? `<div class="qt" data-jump="${m.quote}">${q ? esc(senderName(q, pid)) + '：' + esc(preview(q, false, pid).slice(0, 40)) : '原消息已删除'}</div>` : '';
     return sep + `<div class="msg ${mine ? 'me' : 'them'}" data-id="${m.id}">
       ${avatar(who.avatar, who.name)}
       <div class="col">${showName && !mine ? `<div class="sender">${esc(who.name)}</div>` : ''}
-                <div class="bubble${m.keepRaw ? ' raw' : ''}" data-bubble ${m.keepRaw ? 'title="这条在对方看来是原文"' : ''}>${body}${tr}</div></div></div>`;
+                <div class="bubble${m.keepRaw ? ' raw' : ''}" data-bubble ${m.keepRaw ? 'title="这条在对方看来是原文"' : ''}>${qt}${body}${tr}</div></div></div>`;
   },
      ctx(convId) {
     const i = Conv.parse(convId);
@@ -209,8 +237,10 @@ Views.chat = async ({ convId }) => {
 
   screen().innerHTML = topbar(title, right) +
     `<div class="cv"><div class="cv-msgs" id="msgs"></div>
-     <div class="typing" id="typing" ${Gen.busy.has(convId) ? '' : 'hidden'}>${typingText}</div>${bottom}</div>`;
+          <div class="typing" id="typing" ${Gen.busy.has(convId) ? '' : 'hidden'}>${typingText}</div>
+     <div class="quotebar" id="quotebar" hidden><span></span><button class="btn ghost sm" data-act="unquote" aria-label="取消引用">✕</button></div>${bottom}</div>`;
   ChatUI.convId = convId;
+  ChatUI.quoting = null;
   await ChatUI.refresh();
 
   screen().onclick = async e => {
@@ -225,11 +255,13 @@ Views.chat = async ({ convId }) => {
       try { await API.speak(m.content); } catch (err) { toast(err.message); }
       return;
     }
-
+    const jp = e.target.closest('[data-jump]');
+    if (jp) return ChatUI.jump(jp.dataset.jump);
     const bub = e.target.closest('[data-bubble]');
     if (bub) return msgActions(ChatUI.list.find(x => x.id === bub.closest('[data-id]').dataset.id));
 
     const a = e.target.closest('[data-act]')?.dataset.act;
+    if (a === 'unquote') return ChatUI.setQuote(null);
     if (a === 'media') return Media.pick(convId);
     if (a === 'gset') return Router.go('groupEdit', { gid: i.gid });
        if (a === 'autolang') {
@@ -258,7 +290,9 @@ Views.chat = async ({ convId }) => {
       const inp = $('#inp'), text = inp.value.trim();
       if (!text) return;
       inp.value = '';
-      await addMsg(convId, 'user', text, 'text', autoLang ? { asLang: autoLang } : {});
+            const extra = { ...(autoLang ? { asLang: autoLang } : {}), ...(ChatUI.quoting ? { quote: ChatUI.quoting.id } : {}) };
+      ChatUI.setQuote(null);
+      await addMsg(convId, 'user', text, 'text', extra);
       inp.focus();
     }
     if (a === 'reply') {
@@ -275,6 +309,7 @@ async function msgActions(m) {
   if (await Wallet.tap(m)) return;
   if (await Pet.tapInvite(m)) return;
   const items = [{ label: '复制', value: 'copy' }, { label: '编辑', value: 'edit' }];
+  if (Conv.parse(m.convId).type !== 'cc') items.unshift({ label: '引用', value: 'quote' });
   if (m.trans) items.splice(1, 0, { label: '复制译文', value: 'copytr' });
     const ci = Conv.parse(m.convId);
   const lopts = m.sender === 'user' && m.type === 'text' && ['dm', 'g'].includes(ci.type) ? Lang.choices(m.convId, ci.pid) : [];
@@ -287,6 +322,7 @@ async function msgActions(m) {
     if (m.url) items.unshift(...Media.actions(m));
   const a = await actionSheet(items);
   if (await Media.doAction(a, m)) return;
+  if (a === 'quote') return ChatUI.setQuote(m);
   if (a === 'copy') { await navigator.clipboard?.writeText(m.content); toast('已复制'); }
   if (a === 'copytr') { await navigator.clipboard?.writeText(m.trans); toast('已复制'); }
   if (a === 'edit') {
