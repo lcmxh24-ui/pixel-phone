@@ -110,6 +110,7 @@ Describe only what is visible: subject, setting, lighting, colors, mood. No styl
   // ===== 给 AI 看的格式 =====
    body(m, pid = activePid()) {
     if (m.type === 'transfer') return Wallet.text(m, pid);
+    if (m.type === 'petinvite') return `[一起领养邀请：${m.content}${m.name ? '，想叫「' + m.name + '」' : '，名字没定'}，${{ pending: '等对方回应', ok: '对方同意了', no: '对方拒绝了' }[m.status]}]`;
     if (m.type === 'voice') return '[语音]' + m.content;
     if (m.type === 'image') return `[图片#${m.id.slice(-4)}：${m.desc || m.content || '未识别'}]`;
     if (m.type === 'sticker') return `[表情：${m.content}${m.desc ? '（' + m.desc.slice(0, 40) + '）' : ''}]`;
@@ -118,10 +119,10 @@ Describe only what is visible: subject, setting, lighting, colors, mood. No styl
   },
 
   preview(m) {
-        return { voice: '[语音]', ignore: '[已读]', image: '[图片]', sticker: '[表情]', transfer: '[转账]' }[m.type] || m.content;
+     return { voice: '[语音]', ignore: '[已读]', image: '[图片]', sticker: '[表情]', transfer: '[转账]', petinvite: '[领养邀请]' }[m.type] || m.content;
   },
 
-     rules(group = false, userName = '') {
+    rules(group = false, userName = '') {
     const p = group ? '名字：' : '';
     const r = [];
     const names = this.stickers.map(s => s.name).slice(0, 80);
@@ -135,6 +136,7 @@ Describe only what is visible: subject, setting, lighting, colors, mood. No styl
   画面描述写具体：拍了什么、在哪、光线和氛围。例如：${p}[图片]随拍|刚出锅的番茄炒蛋，旁边一碗米饭，厨房暖黄的灯光`);
     r.push(`- 聊天里的图片显示为 [图片#编号：内容]。想换头像时单独一行 ${p}[换头像]#编号${S.settings.image.url ? `，或者 ${p}[换头像]生成：类型|头像的画面描述` : ''}。很少使用，真的想换才换。`);
     if (r.push && Wallet?.rules) r.push(Wallet.rules(p, userName || '对方', !group || !!userName));
+    r.push(Pet.rules(p));
     return r.join('\n');
   },
 
@@ -145,6 +147,9 @@ Describe only what is visible: subject, setting, lighting, colors, mood. No styl
     if ((m = s.match(/^\[语音\]\s*(.+)$/))) return { type: 'voice', content: m[1].trim() };
     if ((m = s.match(/^\[表情包?\]\s*(.+)$/) || s.match(/^\[表情包?[:：]\s*(.+?)\]$/))) return { type: 'sticker', content: m[1].trim() };
     if ((m = s.match(/^\[换头像\]\s*(.+)$/))) return { type: 'avatar', content: m[1].trim() };
+    if ((m = s.match(/^\[一起领养\]\s*(.+)$/))) return { type: 'petinvite', content: m[1].trim() };
+    if ((m = s.match(/^\[领养\]\s*(.+)$/))) return { type: 'adopt', content: m[1].trim() };
+    if ((m = s.match(/^\[宠物改名\]\s*(.+)$/))) return { type: 'petrename', content: m[1].trim() };
     if ((m = s.match(/^\[图片\]\s*(.+)$/) || s.match(/^\[图片(?:#\w+)?[:：]\s*(.+?)\]$/))) return { type: 'photo', content: m[1].trim() };
     if ((m = s.match(/^\[转账\]\s*(.+)$/))) return { type: 'transfer', content: m[1].trim() };
     if ((m = s.match(/^\[(收款|退还)\]\s*(.*)$/))) return { type: m[1] === '收款' ? 'accept' : 'refund', content: m[2].trim() };
@@ -175,6 +180,9 @@ Describe only what is visible: subject, setting, lighting, colors, mood. No styl
       const label = `（${style}）${desc}`;
       return { sender: it.sender, type: 'image', content: label, extra: { url: url || '', desc: label, gen: true, style } };
     }
+    if (it.type === 'adopt') return Pet.charAdopt(it.sender, it.content, convId);
+    if (it.type === 'petinvite') return Pet.charInvite(it.sender, it.content, convId);
+    if (it.type === 'petrename') return Pet.charRename(it.sender, it.content);
     if (it.type === 'avatar') return this.changeAvatar(it.sender, it.content, convId);
     return it;
   },

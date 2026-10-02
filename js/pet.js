@@ -226,15 +226,142 @@ const Pet = {
     this.drawFab();
   },
 
-  // 给角色提示词用
+   // 给角色提示词用：自己参与养的 + 认识的人设（我）养的
   contextLines(charId, pid) {
-    return this.list.filter(p => p.owners.includes(charId) && (p.owners.includes('p:' + pid) || !this.hasPersona(p))).map(p => {
+    const me = 'p:' + pid;
+    return this.list.filter(p =>
+      (p.owners.includes(charId) && (p.owners.includes(me) || !this.hasPersona(p)))
+      || (p.owners.includes(me) && !p.owners.includes(charId) && knows(pid, charId))
+    ).map(p => {
       this.decay(p);
+      const own = p.owners.includes(charId);
       const co = p.owners.filter(o => o !== charId).map(o => this.who(o));
       const recent = p.log.slice(0, 3).map(l => `${this.who(l.who)}${l.text}（${ChatUI.timeLabel(l.ts)}）`).join('；');
-      return { ts: p.log[0]?.ts || p.born, t: `[宠物] ${charById(charId)?.name}${co.length ? '和' + co.join('、') + '一起' : '自己'}养的${SPECIES[p.sp].name}「${p.name}」（${STAGES[this.stage(p)].n}），现在${this.mood(p)}${recent ? '。最近：' + recent : ''}` };
+      const whose = own
+        ? `${charById(charId)?.name}${co.length ? '和' + co.join('、') + '一起' : '自己'}养的`
+        : `${co.join('、')}养的`;
+      return { ts: p.log[0]?.ts || p.born, t: `[宠物] ${whose}${this.colorName(p)}${SPECIES[p.sp].name}「${p.name}」（${STAGES[this.stage(p)].n}），现在${this.mood(p)}${recent ? '。最近：' + recent : ''}` };
     });
   },
+
+  // ===== 角色自己领养 / 邀请一起养 / 改名 =====
+  rules(p) {
+    const sps = Object.values(SPECIES).map(s => `${s.name}（${s.colors.map(c => c.n).join('/')}）`).join('、');
+    return `- 宠物（很少用。真的想养、符合性格和剧情时才用，可以自己主动决定，不用等别人提）：
+  自己领养：单独一行 ${p}[领养]动物|花色|名字
+  想和对方一起养：单独一行 ${p}[一起领养]动物|花色|名字。名字可以空着，让对方起或者之后一起商量。对方同意了才算数。
+  给自己参与养的宠物改名（比如商量好了新名字）：单独一行 ${p}[宠物改名]旧名字|新名字
+  每人自己最多养 3 只。能养的动物和花色：${sps}`;
+  },
+
+  findSp(n) {
+    n = String(n || '').trim();
+    const ks = Object.keys(SPECIES);
+    return ks.find(k => SPECIES[k].name === n || k === n)
+      || ks.find(k => n && (SPECIES[k].name.includes(n) || n.includes(SPECIES[k].name)));
+  },
+  findColor(sp, n) {
+    const cs = SPECIES[sp].colors;
+    const i = cs.findIndex(c => n && (c.n === n || c.n.includes(n) || n.includes(c.n)));
+    return i >= 0 ? i : Math.floor(Math.random() * cs.length);
+  },
+  // 「动物|花色|名字」→ { sp, color, name }
+  parseSpec(s) {
+    const [a, b, c] = String(s).split(/[|｜]/).map(x => x.trim());
+    const sp = this.findSp(a);
+    if (!sp) return null;
+    return { sp, color: this.findColor(sp, b), name: (c || '').replace(/^["“「『]|["”」』]$/g, '').slice(0, 12) };
+  },
+  newPet(sp, color, name, owners) {
+    const p = { id: uid(), sp, color, name: name || SPECIES[sp].name, owners, hunger: 80, clean: 100, happy: 80, poop: 0, poopAcc: 0,
+      exp: 0, neglect: 0, sick: false, ts: Date.now(), born: Date.now(), lastShow: Date.now(), log: [] };
+    this.log(p, owners[0], '领养了它');
+    this.list.push(p);
+    return p;
+  },
+  petLabel(p) { return `${this.colorName(p)}${SPECIES[p.sp].name}「${p.name}」`; },
+
+  // 角色自己领养。在角色间私聊里说的，算两个人一起养
+  async charAdopt(charId, spec, convId) {
+    const v = this.parseSpec(spec);
+    if (!v || !charById(charId)) return null;
+    if (this.list.filter(p => p.owners.includes(charId)).length >= 3) return null;
+    const i = Conv.parse(convId), owners = [charId];
+    if (i.type === 'cc') owners.push(charId === i.a ? i.b : i.a);
+    const p = this.newPet(v.sp, v.color, v.name, owners);
+    await this.save();
+    return { sender: charId, type: 'sys', content: `${owners.map(o => this.who(o)).join('和')} 领养了一只${this.petLabel(p)}` };
+  },
+
+  // 角色邀请我一起养：先发一张卡片，我点了同意才真的领养
+  async charInvite(charId, spec, convId) {
+    if (Conv.parse(convId).type === 'cc') return this.charAdopt(charId, spec, convId);
+    const v = this.parseSpec(spec);
+    if (!v) return null;
+    const s = SPECIES[v.sp];
+    return { sender: charId, type: 'petinvite', content: `想一起养一只${s.colors[v.color].n}${s.name}`, extra: { ...v, status: 'pending' } };
+  },
+
+  renderInvite(m) {
+    const s = SPECIES[m.sp];
+    const st = { pending: '点击回应', ok: '已经一起领养啦', no: '已拒绝' }[m.status];
+    return `<div class="tf ${m.status === 'pending' ? '' : 'accepted'}"><div class="tf-amt">🐾 一起养${esc(s?.name || '宠物')}吧</div>
+      <div class="tf-note">${esc(s?.colors[m.color]?.n || '')} · ${m.name ? '「' + esc(m.name) + '」' : '名字还没想好'}</div>
+      <div class="tf-st">${st}</div></div>`;
+  },
+
+  // 点邀请卡片。返回 true 表示已处理
+  async tapInvite(m) {
+    if (m.type !== 'petinvite') return false;
+    if (m.status !== 'pending') { toast(m.status === 'ok' ? '已经一起领养了' : '已经拒绝了'); return true; }
+    const ch = charById(m.sender);
+    if (!ch) return true;
+    const opts = [];
+    if (m.name) opts.push({ label: `同意，就叫「${m.name}」`, value: 'his' });
+    opts.push({ label: '同意，我来起名', value: 'mine' });
+    opts.push({ label: `同意，让${ch.name}来起名`, value: 'ask' });
+    opts.push({ label: '拒绝', value: 'no', danger: true });
+    const a = await actionSheet(opts);
+    if (!a) return true;
+    const pid = ChatUI.ctx(m.convId).pid, me = persona(pid).name;
+    if (a === 'no') {
+      m.status = 'no';
+      await DB.put('msgs', m);
+      await addMsg(m.convId, 'user', `${me} 拒绝了一起养宠物`, 'sys');
+      return true;
+    }
+    let name = m.name;
+    if (a === 'mine') {
+      name = (await editText('给它起个名字', m.name || '', false))?.trim().slice(0, 12);
+      if (!name) return true;
+    }
+    if (a === 'ask') name = '';
+    const p = this.newPet(m.sp, m.color, name, ['p:' + pid, ch.id]);
+    m.status = 'ok';
+    m.petId = p.id;
+    await DB.put('msgs', m);
+    await this.save();
+    this.drawFab();
+    await addMsg(m.convId, 'user', a === 'ask'
+      ? `${me} 和 ${ch.name} 一起领养了一只${this.colorName(p)}${SPECIES[p.sp].name}，${me}想让${ch.name}来起名字（现在暂时叫「${p.name}」）`
+      : `${me} 和 ${ch.name} 一起领养了${this.petLabel(p)}`, 'sys');
+    return true;
+  },
+
+  // 角色给自己参与养的宠物改名
+  async charRename(charId, spec) {
+    const [a, b] = String(spec).split(/[|｜]/).map(x => x.trim());
+    const n = (b || '').replace(/^["“「『]|["”」』]$/g, '').slice(0, 12);
+    const mine = this.list.filter(x => x.owners.includes(charId));
+    const p = mine.find(x => x.name === a) || (mine.length === 1 ? mine[0] : null);
+    if (!p || !n || n === p.name) return null;
+    const old = p.name;
+    p.name = n;
+    this.log(p, charId, `把名字从「${old}」改成了「${n}」`);
+    await this.save();
+    return { sender: charId, type: 'sys', content: `${this.who(charId)} 把${SPECIES[p.sp].name}「${old}」改名为「${n}」` };
+  },
+
 
   // ===== 绘制 =====
   palette(p) { const s = SPECIES[p.sp]; return { ...PET_C, ...(s.colors[p.color] || s.colors[0]) }; },

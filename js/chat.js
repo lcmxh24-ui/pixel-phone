@@ -136,6 +136,7 @@ const ChatUI = {
     const body = m.type === 'voice'
       ? `<button class="voice" data-voice="${m.id}" aria-label="语音消息 ${sec} 秒">▶ ${'▮'.repeat(Math.min(8, Math.ceil(sec / 3)))} ${sec}"</button><div class="vtext">${esc(m.content)}</div>`
       : m.type === 'transfer' ? Wallet.render(m, pid)
+      : m.type === 'petinvite' ? Pet.renderInvite(m)
       : ['image', 'sticker'].includes(m.type) ? Media.render(m) : this.fmt(m.content, pid);
     // 译文：放在 body 整个表达式结束之后
     const tr = m.trans && S.settings.translate?.show !== false ? `<div class="tr">${esc(m.trans)}</div>` : '';
@@ -259,6 +260,7 @@ Views.peekView = p => Views.chat(p);
 async function msgActions(m) {
   if (!m) return;
   if (await Wallet.tap(m)) return;
+  if (await Pet.tapInvite(m)) return;
   const items = [{ label: '复制', value: 'copy' }, { label: '编辑', value: 'edit' }];
   if (m.trans) items.splice(1, 0, { label: '复制译文', value: 'copytr' });
   const ci = Conv.parse(m.convId), dmc = ci.type === 'dm' && charById(ci.charId);
@@ -310,15 +312,39 @@ Views.newGroup = async () => {
       <label class="field"><span>群头像链接</span><input id="gav" placeholder="https://..." autocapitalize="off"></label>
     </div>
     <h3>选择成员</h3><div class="card">${memberChecks([], pid)}</div>
+    <h3>群主</h3><div class="card">
+      <label class="field"><span>谁建的这个群</span><select id="gowner"><option value="user">${esc(persona(pid).name)}（我）</option></select></label>
+      <label class="row"><span>让群主自己起群名（会覆盖上面填的）</span><input type="checkbox" id="gauto" checked></label>
+      ${S.settings.image.url ? '<label class="row"><span>顺便让群主生成群头像</span><input type="checkbox" id="gautoav"></label>' : ''}
+      <p class="empty">群主选角色时才生效。角色会以为群是他自己建的。</p>
+    </div>
     <p class="empty">群属于当前人设「${esc(persona(pid).name)}」。</p>
     <button class="btn" data-act="create">创建</button></div>`;
+
+  // 勾选成员后，群主下拉框跟着更新
+  const ownerSel = $('#gowner');
+  const syncOwner = () => {
+    const cur = ownerSel.value;
+    ownerSel.innerHTML = `<option value="user">${esc(persona(pid).name)}（我）</option>` +
+      checkedMembers().map(id => `<option value="${id}">${esc(charById(id)?.name || '?')}</option>`).join('');
+    ownerSel.value = [...ownerSel.options].some(o => o.value === cur) ? cur : 'user';
+  };
+  $$('[data-mem]').forEach(el => el.onchange = syncOwner);
+
+  let creating = false;
   screen().onclick = async e => {
-    if (e.target.closest('[data-act]')?.dataset.act !== 'create') return;
+    if (e.target.closest('[data-act]')?.dataset.act !== 'create' || creating) return;
     const members = checkedMembers();
     if (!members.length) return toast('至少选一个角色');
-    const g = { id: uid(), name: $('#gname').value.trim() || '群聊', avatar: $('#gav').value.trim(), members, personaId: pid, created: Date.now() };
+    creating = true;
+    const owner = ownerSel.value;
+    const g = { id: uid(), name: $('#gname').value.trim() || '群聊', avatar: $('#gav').value.trim(), members, personaId: pid, owner, admins: [], created: Date.now() };
     await DB.put('groups', g);
     S.groups.push(g);
+    if (owner !== 'user' && $('#gauto').checked) {
+      toast(`${charById(owner).name} 在起群名…`, 3000);
+      await GroupAdmin.autoName(g, !!$('#gautoav')?.checked);
+    }
     Router.replace('group', { gid: g.id });
   };
 };
@@ -339,8 +365,9 @@ Views.groupEdit = async ({ gid }) => {
     <div class="card">
       <label class="field"><span>群主</span><select id="g-owner">${people.map(id =>
         `<option value="${id}" ${GA.owner(g) === id ? 'selected' : ''}>${esc(who(id))}</option>`).join('')}</select></label>
-      ${people.filter(id => id !== GA.owner(g)).map(id => `<label class="row"><span>${esc(who(id))} 是管理员</span>
+            ${people.filter(id => id !== GA.owner(g)).map(id => `<label class="row"><span>${esc(who(id))} 是管理员</span>
         <input type="checkbox" data-adm="${id}" ${GA.admins(g).includes(id) ? 'checked' : ''}></label>`).join('')}
+      ${GA.owner(g) !== 'user' ? `<button class="btn ghost" data-act="rename" style="margin-top:8px">让 ${esc(who(GA.owner(g)))} 重新起群名（不通知）</button>` : ''}
     </div>
     ${me !== 'member' ? `<h3>在群里操作（会发通知）</h3><div class="card flex" style="gap:6px;flex-wrap:wrap">
       <button class="btn ghost" data-act="invite">拉人进群</button>
@@ -384,6 +411,12 @@ Views.groupEdit = async ({ gid }) => {
 
   screen().onclick = async e => {
     const a = e.target.closest('[data-act]')?.dataset.act;
+    if (a === 'rename') {
+      toast('起名中…', 3000);
+      if (await GA.autoName(g, false)) { toast('新群名：' + g.name); Router.render(); }
+      else toast('起名失败，详情见「记忆体检」');
+      return;
+    }
     if (a === 'invite') return doAct('拉人', GA.invitable(g, 'user').map(c => c.id));
     if (a === 'kick') return doAct('踢人', g.members.filter(id => me === 'owner' || GA.role(g, id) === 'member'));
     if (a === 'transfer') return doAct('转让群主', g.members);
@@ -498,6 +531,41 @@ const GroupAdmin = {
       if (oc) out.push(`- 群主${oc.name}还可以：名字：[设管理]名字 / 名字：[撤管理]名字 / 名字：[转让群主]名字`);
     }
     return out.join('\n');
+  },
+  // 让群主按自己的性格给群起名，可选顺便生成头像。静默修改，不发通知
+  async autoName(g, withAvatar = false) {
+    const o = charById(this.owner(g));
+    if (!o || !S.settings.claude.key) return false;
+    const pid = g.personaId, pname = persona(pid).name;
+    const others = g.members.filter(id => id !== o.id).map(charById).filter(Boolean);
+    const rel = c => getRel(o.id, c.id).desc || (knows(o.id, c.id) ? '认识' : '不熟');
+    const wb = WB.build([o.id, ...g.members], '');
+    const system = [
+      `你在扮演${o.name}。${o.name}刚建了一个手机群聊，要给群起名字。`,
+      `【${o.name}的设定】\n${o.persona || '（无）'}`,
+      wb.constant && `【世界设定】\n${wb.constant}`,
+      `【群成员】\n${pname}（${getRel(pid, o.id).desc || '认识'}）\n${others.map(c => `${c.name}（${rel(c)}）`).join('\n') || '（暂时没有别人）'}`,
+      `【要求】
+- 起一个符合${o.name}性格、语言习惯和这群人关系的群名。可以正经、随便、搞笑或者用梗，像真人建群时会起的名字。
+- 群名用${o.name}的母语${Lang.of(o)}写。
+- 第一行只写群名，不超过 15 个字，不加引号和解释。${withAvatar ? '\n- 第二行写群头像的画面描述，格式：[图片]类型|画面描述' : ''}`,
+    ].filter(Boolean).join('\n\n');
+    let out;
+    try { out = await API.claude(system, [{ role: 'user', content: '起名吧。' }], { maxTokens: 200 }); }
+    catch (e) { Log.add('群主起名失败', e.message); return false; }
+    const lines = out.split('\n').map(s => s.trim()).filter(Boolean);
+    const name = (lines.find(l => !l.startsWith('[')) || '').replace(/^["“「『]|["”」』]$/g, '').slice(0, 30);
+    if (name) g.name = name;
+    const img = lines.find(l => /^\[图片\]/.test(l));
+    if (withAvatar && img && S.settings.image.url) {
+      try {
+        const { style, desc } = Media.parseStyle(img.replace(/^\[图片\]\s*/, ''));
+        const url = await Media.genImage(await Media.makePrompt(desc, style, o));
+        if (url) g.avatar = url;
+      } catch (e) { Log.add('群头像生成失败', e.message); }
+    }
+    await DB.put('groups', g);
+    return !!name;
   },
 };
 
