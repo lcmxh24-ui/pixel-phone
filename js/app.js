@@ -289,7 +289,7 @@ function field(label, path, opt = {}) {
 function bindFields(root, after) {
   $$('[data-path]', root).forEach(el => {
     el.onchange = async () => {
-      const v = el.type === 'checkbox' ? el.checked : el.type === 'number' ? Number(el.value) : el.value;
+    const v = el.type === 'checkbox' ? el.checked : el.type === 'number' ? (el.value === '' ? '' : Number(el.value)) : el.value;
       setP(S.settings, el.dataset.path, v);
       await saveSettings();
       if (el.dataset.path.startsWith('theme')) applyTheme();
@@ -426,10 +426,12 @@ Views.charEdit = async ({ id }) => {
         <option value="native" ${c.chatLang !== 'user' ? 'selected' : ''}>母语（附翻译）</option>
         <option value="user" ${c.chatLang === 'user' ? 'selected' : ''}>你的语言</option></select></label>
       <label class="row"><span>会用翻译软件</span><input type="checkbox" data-x="translator" ${c.translator ? 'checked' : ''}></label>
+      <label class="row"><span>会主动找你、发朋友圈、找别人聊</span><input type="checkbox" data-x="proactive" ${c.proactive !== false ? 'checked' : ''}></label>
     </div>
     <div class="card flex" style="flex-wrap:wrap;gap:8px">
       <button class="btn" data-act="chat" ${knows(pid, c.id) ? '' : 'disabled'}>发消息</button>
       <button class="btn ghost" data-act="mems">查看记忆（${esc(persona(pid).name)}）</button>
+      <button class="btn ghost" data-act="clear">清空记录 / 记忆</button>
       <button class="btn danger" data-act="del">删除角色</button>
     </div>
     ${knows(pid, c.id) ? '' : `<p class="empty">${esc(persona(pid).name)}和${esc(c.name)}还不认识，去「关系网」里设置后才能私聊。</p>`}
@@ -461,6 +463,24 @@ Views.charEdit = async ({ id }) => {
       Object.assign(c, { city: '', lat: null, lon: null, tz: '' });
       await DB.put('chars', c);
       return Router.render();
+    }
+    if (a === 'clear') {
+      const k = await actionSheet([
+        { label: '清空聊天记录', value: 'msg', danger: true },
+        { label: '清空记忆', value: 'mem', danger: true },
+        { label: '两个都清空', value: 'all', danger: true },
+      ]);
+      if (!k || !await confirmBox(`确定清空（只影响「${persona(pid).name}」，删了找不回来）`)) return;
+      const convId = Conv.dm(pid, c.id);
+      if (k !== 'mem') {
+        for (const m of await getMsgs(convId)) await DB.del('msgs', m.id);
+        await DB.del('kv', 'memstate_' + convId); // 总结进度一起重置
+      }
+      if (k !== 'msg') {
+        for (const m of await DB.byIndex('mems', 'charId', c.id)) if (m.personaId === pid) await DB.del('mems', m.id);
+        Memory._q = { text: null, vec: null };
+      }
+      toast('已清空');
     }
     if (a === 'chat') Router.go('chat', { convId: Conv.dm(pid, c.id) });
     if (a === 'mems') Router.go('mems', { charId: c.id });

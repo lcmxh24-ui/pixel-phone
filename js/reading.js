@@ -119,6 +119,8 @@ ${Lang.groupRule(members, p)}
       ? `（${p.name}正在安静地看第 ${room.page + 1} 页，没有说话。成员可以自然地聊聊这页的内容、互相讨论，或者问问${p.name}看到哪了。没人想说话就只输出 [无]）`
       : `（接着${p.name}的话聊）`;
     if (!auto && ats.length) tail = `（${p.name}@了${ats.join('、')}，被@的人要回应。）`;
+    const lt = Lang.groupTail(members, p);
+    if (lt) tail += '\n' + lt;
 
     const lines = hist.map(m => Prompt.line(m, pid));
     const cut = S.settings.cache?.enabled ? Math.floor(lines.length / 10) * 10 : 0;

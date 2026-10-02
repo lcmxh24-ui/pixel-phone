@@ -27,6 +27,26 @@ const SPECIES = {
     colors: [{ n: '奶牛', B: '#f4f4f0', D: '#2a2a2a', W: '#ffffff' }, { n: '黄牛', B: '#c08040', D: '#7a4a20', W: '#f0d8b0' }, { n: '草莓牛', B: '#fff0f4', D: '#f490b0', W: '#ffffff' }] },
   frog: { name: '青蛙', map: ['.BB..BB...', 'BEWBBEWB..', 'BBBBBBBB..', 'BDBBBBDB..', '.BBPPBB...', 'BBWWWWBB..', 'BWWWWWWB..', 'BB.BB.BB..'],
     colors: [{ n: '草绿', B: '#7cc850', D: '#3f7a28', W: '#e8f8c8' }, { n: '柠檬', B: '#f0d040', D: '#a08010', W: '#fff8d0' }] },
+  dino: { name: '恐龙', map: [
+      '.....BBBB.',
+      '....BBEBBB',
+      '....BBBBBB',
+      '.D..BBBP..',
+      'D.DBBBBB..',
+      'BBBBWWBB..',
+      '.BBBWWBBB.',
+      '..BBWWBB..',
+      '...BB.BB..',
+      '...DD.DD..'],
+    colors: [
+      { n: '小绿龙', B: '#7cc850', D: '#3f7a28', W: '#e8f8c8' },
+      { n: '霸王棕', B: '#b07840', D: '#6a4220', W: '#f0d8b0' },
+      { n: '草莓粉', B: '#f8a8c0', D: '#d0607e', W: '#fff0f4' },
+      { n: '冰川蓝', B: '#88c8f0', D: '#3a7ab0', W: '#e8f6ff' },
+      { n: '葡萄紫', B: '#a888d8', D: '#6a4a9a', W: '#efe6ff' },
+      { n: '暗夜黑金', B: '#34343c', D: '#e0b828', W: '#5a5a64', E: '#f0d040' },
+      { n: '化石白', B: '#ece6d6', D: '#a89a7a', W: '#ffffff', E: '#3a3020' },
+    ] },
 };
 
 // 成长阶段：k 是体型比例，exp 是需要的成长值

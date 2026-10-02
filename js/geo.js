@@ -88,6 +88,7 @@ const Lang = {
         : `{{角色}}看不懂${U}，偶尔会理解错，看不懂时才会让{{用户}}换个说法。`);
     }
     r.push(`会说的语言：{{角色}} ${[...this.set(ch)].join('、')}；{{用户}} ${[...this.set(p)].join('、')}。`);
+    if (L !== U) r.push(`{{用户}}的消息后面如果标着"（实际是用${L}发的）"，说明那条是{{用户}}直接用${L}写的，{{角色}}能直接看懂。当作对方在用${L}聊天，不要对此感到意外或评论。`);
     r.push('语言和翻译只体现在说话方式上，不要主动提"我在用翻译""我的中文不好"这类话，除非真的出现误会或对方问起。');
     return r.join('\n');
   },
@@ -114,11 +115,23 @@ const Lang = {
     return r.join('\n');
   },
 
-  // 群聊 / 共读
+    // 群聊 / 共读
   groupRule(members, p) {
     const v = this.of(p);
     if (members.every(c => this.of(c) === v && !String(c.langs || '').trim())) return '';
-    return `- 语言：${members.map(c => `${c.name}母语${this.of(c)}${String(c.langs || '').trim() ? '，也会' + c.langs : ''}${c.translator ? '，会用翻译软件' : ''}`).join('；')}。${p.name}说${v}。
-  每个人按自己的习惯和能力选择语言，照顾到群里的人时可以改用大家都懂的语言。不是${v}的消息后面加 [译]${v}翻译。`;
+    const foreign = members.filter(c => this.of(c) !== v).map(c => c.name);
+    return `【语言】（重要，必须遵守）
+${members.map(c => `· ${c.name}：母语${this.of(c)}${String(c.langs || '').trim() ? '，也会' + c.langs : ''}${c.translator ? '，会用翻译软件' : ''}`).join('\n')}
+· ${p.name}：说${v}
+- 每个人默认用自己的母语发消息。就算前面的聊天记录大多是${v}，也不要跟着改。
+- 会别的语言的人，偶尔可以为了照顾别人换一种语言，但大部分时候还是用母语。
+${foreign.length ? `- ${foreign.join('、')}的消息原文不是${v}。` : ''}
+- 不是${v}的消息，在同一行末尾加翻译，格式：名字：原文 [译]${v}翻译`;
+  },
+
+  // 放在群聊最后的语言提醒，位置越靠后 AI 越会遵守
+  groupTail(members, p) {
+    const v = this.of(p), f = members.filter(c => this.of(c) !== v);
+    return f.length ? `（${f.map(c => `${c.name}用${this.of(c)}`).join('，')}发言，不是${v}的消息末尾加 [译]${v}翻译。）` : '';
   },
 };

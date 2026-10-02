@@ -57,23 +57,27 @@ const Social = {
     return out;
   },
 
-  // 随机一次主动行为：角色找你，或两个角色互相聊。只针对当前人设
+   // 随机一次主动行为：角色找你，或两个角色互相聊。只针对当前人设
   async act(at = null) {
     const pid = activePid(), p = S.settings.proactive;
     const ref = at || Date.now();
-    const posters = S.chars.filter(c => knows(pid, c.id));
+    // 角色编辑页里关掉「会主动」的不参与。没设置过的默认开启
+    const active = c => c.proactive !== false;
+    const posters = S.chars.filter(c => knows(pid, c.id) && active(c));
     if (posters.length && Math.random() < Number(p.momentRate ?? 0.2)) return Moments.post(pick(posters).id, pid, at);
     const dms = [];
     for (const c of S.chars) {
-      if (!knows(pid, c.id)) continue;
+      if (!knows(pid, c.id) || !active(c)) continue;
       const last = await lastMsg(Conv.dm(pid, c.id));
       // 10 分钟内聊过的不主动找
       if (!last || ref - last.ts > 10 * 60e3) dms.push(c);
     }
-    const pairs = this.knownPairs();
+    // 两个人里至少有一个会主动，才可能聊起来；由会主动的那个发起
+    const pairs = this.knownPairs().filter(([a, b]) => active(a) || active(b));
     if (pairs.length && (Math.random() < Number(p.ccRate) || !dms.length)) {
       const [a, b] = pick(pairs);
-      return Gen.cc(Conv.cc(pid, a.id, b.id), { at });
+      const from = active(a) && active(b) ? null : active(a) ? a.id : b.id;
+      return Gen.cc(Conv.cc(pid, a.id, b.id), { at, from });
     }
     if (dms.length) {
       const c = pick(dms);
@@ -104,7 +108,7 @@ const Social = {
     if (!due.length) return;
     await this.setKv('intents', list.filter(x => x.due > now));
     for (const x of due) {
-      if (!S.settings.personas.some(p => p.id === x.pid) || !charById(x.from)) continue;
+    if (!S.settings.personas.some(p => p.id === x.pid) || !charById(x.from) || charById(x.from).proactive === false) continue;
       // 网页关着时到期的，按到期时间补发
       const at = now - x.due > 120e3 ? x.due : null;
       if (x.kind === 'dm') await Gen.dm(Conv.dm(x.pid, x.from), { hint: Prompt.proactiveHint(x.reason), at, proactive: true });

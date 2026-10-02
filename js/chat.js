@@ -7,8 +7,18 @@ const Gen = {
   },
 
   // 逐条发出。at 有值时是离线补发，时间落在过去；否则模拟打字延迟实时发出
-        async post(convId, items, { at = null, batch = uid() } = {}) {
+         async post(convId, items, { at = null, batch = uid() } = {}) {
+    const ci = Conv.parse(convId);
     for (let i = 0; i < items.length; i++) {
+      const ts = at ? Math.min(at + i * 15e3, Date.now() - (items.length - i) * 1000) : null;
+      // 群里刚被踢出去的人，后面的话不再发出
+      if (ci.type === 'g' && items[i].sender !== 'user' && !ci.group?.members.includes(items[i].sender)) continue;
+      // 群管理操作：执行成功才显示一条系统提示
+      if (items[i].cmd) {
+        const t = await GroupAdmin.apply(convId, items[i].sender, items[i].cmd);
+        if (t) await addMsg(convId, items[i].sender, t, 'sys', { batch, ...(ts ? { ts } : {}) });
+        continue;
+      }
       // 先拆出 [译] 后面的译文，再交给 Media.prepare 处理图片、表情、转账等
       const sp = Lang.split(items[i].content);
       const it = await Media.prepare({ ...items[i], content: sp.content }, convId);
@@ -16,11 +26,8 @@ const Gen = {
       const extra = { ...(it.extra || {}), batch };
       // 只有文字和语音带译文，转账、系统提示这类不带
       if (sp.trans && ['text', 'voice'].includes(it.type)) extra.trans = sp.trans;
-      if (at) {
-        extra.ts = Math.min(at + i * 15e3, Date.now() - (items.length - i) * 1000);
-      } else {
-        await sleep(Math.min(500 + it.content.length * 60, 2500));
-      }
+      if (ts) extra.ts = ts;
+      else await sleep(Math.min(500 + it.content.length * 60, 2500));
       await addMsg(convId, it.sender, it.content, it.type, extra);
     }
   },
@@ -64,9 +71,9 @@ const Gen = {
       const members = (g?.members || []).map(charById).filter(Boolean);
       if (!members.length) throw new Error('群里还没有角色');
       const { system, messages } = await Prompt.buildGroup(g, convId);
-      const r = Prompt.parseLines(await API.claude(system, messages, { maxTokens: 1500 }), members.map(c => c.name));
+            const r = Prompt.parseLines(await API.claude(system, messages, { maxTokens: 1500 }), members.map(c => c.name), { cmds: true });
       const byName = n => members.find(c => c.name === n);
-      await this.post(convId, r.msgs.map(m => ({ sender: byName(m.name).id, type: m.type, content: m.content })), { at });
+      await this.post(convId, r.msgs.map(m => ({ sender: byName(m.name).id, type: m.type, content: m.content, cmd: m.cmd })), { at });
       for (const it of r.intents) {
         const f = byName(it.from);
         if (f) await Social.queueIntent(g.personaId, f.id, it.to, it.reason);
@@ -135,7 +142,7 @@ const ChatUI = {
     return sep + `<div class="msg ${mine ? 'me' : 'them'}" data-id="${m.id}">
       ${avatar(who.avatar, who.name)}
       <div class="col">${showName && !mine ? `<div class="sender">${esc(who.name)}</div>` : ''}
-        <div class="bubble" data-bubble>${body}${tr}</div></div></div>`;
+        <div class="bubble" data-bubble>${body}${tr}${m.asNative ? '<div class="tr">🌐 对方看到的是他的母语</div>' : ''}</div></div></div>`;
   },
      ctx(convId) {
     const i = Conv.parse(convId);
@@ -179,8 +186,13 @@ Views.chat = async ({ convId }) => {
   else title = `${charById(i.a)?.name || '?'} & ${charById(i.b)?.name || '?'}`;
   if (!title) return Router.back();
 
-  const isG = i.type === 'g', isCC = i.type === 'cc';
-  const right = isG ? '<button class="btn ghost" data-act="gset" aria-label="群设置">⚙</button>' : '';
+    const isG = i.type === 'g', isCC = i.type === 'cc';
+  // 单聊且母语不同时，可以开「我说的话在他看来是他的母语」
+  const dmCh = i.type === 'dm' ? charById(i.charId) : null;
+  const canAuto = dmCh && Lang.of(dmCh) !== Lang.of(persona(pid));
+  const autoOn = !!(canAuto && S.settings.autoLang?.[convId]);
+  const right = isG ? '<button class="btn ghost" data-act="gset" aria-label="群设置">⚙</button>'
+    : canAuto ? `<button class="btn ${autoOn ? '' : 'ghost'}" data-act="autolang" aria-pressed="${autoOn}" aria-label="我的消息在对方看来是${esc(Lang.of(dmCh))}">译${autoOn ? '✓' : ''}</button>` : '';
   const typingText = isCC ? '他们正在聊…' : isG ? '有人正在输入…' : '对方正在输入…';
   const bottom = isCC
     ? `<div class="peekbar"><span>👀 你在偷看，他们不知道</span><button class="btn" data-act="more">让他们继续聊</button></div>`
@@ -216,6 +228,12 @@ Views.chat = async ({ convId }) => {
     const a = e.target.closest('[data-act]')?.dataset.act;
     if (a === 'media') return Media.pick(convId);
     if (a === 'gset') return Router.go('groupEdit', { gid: i.gid });
+    if (a === 'autolang') {
+      S.settings.autoLang = { ...(S.settings.autoLang || {}), [convId]: !autoOn };
+      await saveSettings();
+      toast(!autoOn ? `已开启：你发的消息在${dmCh.name}看来是${Lang.of(dmCh)}` : '已关闭');
+      return Router.render();
+    }
     if (a === 'more') return Gen.cc(convId);
     if (a === 'at') {
       const names = [...i.group.members.map(charById).filter(Boolean).map(c => c.name), '全体成员'];
@@ -226,7 +244,7 @@ Views.chat = async ({ convId }) => {
       const inp = $('#inp'), text = inp.value.trim();
       if (!text) return;
       inp.value = '';
-      await addMsg(convId, 'user', text);
+      await addMsg(convId, 'user', text, 'text', autoOn ? { asNative: true } : {});
       inp.focus();
     }
     if (a === 'reply') {
@@ -243,6 +261,10 @@ async function msgActions(m) {
   if (await Wallet.tap(m)) return;
   const items = [{ label: '复制', value: 'copy' }, { label: '编辑', value: 'edit' }];
   if (m.trans) items.splice(1, 0, { label: '复制译文', value: 'copytr' });
+  const ci = Conv.parse(m.convId), dmc = ci.type === 'dm' && charById(ci.charId);
+  if (m.sender === 'user' && m.type === 'text' && dmc && Lang.of(dmc) !== Lang.of(persona(ci.pid))) {
+    items.splice(1, 0, { label: m.asNative ? '这条在他看来改回原文' : `这条在他看来是${Lang.of(dmc)}`, value: 'native' });
+  }
   if (m.sender !== 'user') items.push({ label: '重新生成这一轮', value: 'regen' });
   items.push({ label: '删除', value: 'del', danger: true });
     if (m.url) items.unshift(...Media.actions(m));
@@ -254,6 +276,7 @@ async function msgActions(m) {
     const t = await editText('编辑消息', m.content);
     if (t?.trim()) { m.content = t.trim(); await DB.put('msgs', m); ChatUI.refresh(); }
   }
+  if (a === 'native') { m.asNative = !m.asNative; await DB.put('msgs', m); ChatUI.refresh(); }
   if (a === 'del') { await DB.del('msgs', m.id); ChatUI.refresh(); }
   if (a === 'regen') await regenerate(m);
 }
@@ -303,23 +326,178 @@ Views.newGroup = async () => {
 Views.groupEdit = async ({ gid }) => {
   const g = S.groups.find(x => x.id === gid);
   if (!g) return Router.home();
+  const GA = GroupAdmin, convId = Conv.g(gid), pid = g.personaId;
+  const me = GA.role(g, 'user'), who = id => GA.name(g, id);
+  const people = ['user', ...g.members];
   screen().innerHTML = topbar('群设置') + `<div class="body">
     <div class="card">
       <label class="field"><span>群名</span><input data-g="name" value="${esc(g.name)}"></label>
       <label class="field"><span>群头像链接</span><input data-g="avatar" value="${esc(g.avatar)}" autocapitalize="off"></label>
     </div>
-    <h3>成员</h3><div class="card">${memberChecks(g.members, g.personaId)}</div>
+    <h3>群主和管理员</h3>
+    <p class="empty">这里改的算"本来就是这样"，群里不会通知，角色会以为群一开始就是群主建的。</p>
+    <div class="card">
+      <label class="field"><span>群主</span><select id="g-owner">${people.map(id =>
+        `<option value="${id}" ${GA.owner(g) === id ? 'selected' : ''}>${esc(who(id))}</option>`).join('')}</select></label>
+      ${people.filter(id => id !== GA.owner(g)).map(id => `<label class="row"><span>${esc(who(id))} 是管理员</span>
+        <input type="checkbox" data-adm="${id}" ${GA.admins(g).includes(id) ? 'checked' : ''}></label>`).join('')}
+    </div>
+    ${me !== 'member' ? `<h3>在群里操作（会发通知）</h3><div class="card flex" style="gap:6px;flex-wrap:wrap">
+      <button class="btn ghost" data-act="invite">拉人进群</button>
+      <button class="btn ghost" data-act="kick">踢人</button>
+      ${me === 'owner' ? '<button class="btn ghost" data-act="setadm">设 / 撤管理员</button><button class="btn ghost" data-act="transfer">转让群主</button>' : ''}
+    </div>` : ''}
+    <h3>成员（直接编辑，不发通知）</h3><div class="card">${memberChecks(g.members, pid)}</div>
     <button class="btn danger" data-act="del">解散群聊</button></div>`;
+
   const save = () => DB.put('groups', g);
   $$('[data-g]').forEach(el => el.onchange = () => { g[el.dataset.g] = el.value.trim(); save(); });
-  $$('[data-mem]').forEach(el => el.onchange = () => { g.members = checkedMembers(); save(); });
+  $$('[data-mem]').forEach(el => el.onchange = async () => {
+    g.members = checkedMembers();
+    // 不在群里的人不能再当群主或管理员
+    g.admins = GA.admins(g).filter(x => x === 'user' || g.members.includes(x));
+    if (GA.owner(g) !== 'user' && !g.members.includes(g.owner)) g.owner = 'user';
+    await save();
+    Router.render();
+  });
+  $('#g-owner').onchange = async e => {
+    g.owner = e.target.value;
+    g.admins = GA.admins(g).filter(x => x !== g.owner);
+    await save();
+    Router.render();
+  };
+  $$('[data-adm]').forEach(el => el.onchange = async () => {
+    g.admins = $$('[data-adm]').filter(x => x.checked).map(x => x.dataset.adm);
+    await save();
+  });
+
+  // 选一个人，执行群操作，并在群里发通知
+  const doAct = async (k, ids) => {
+    if (!ids.length) return toast('没有可选的人');
+    const id = await actionSheet(ids.map(x => ({ label: who(x), value: x })));
+    if (!id) return;
+    const t = await GA.apply(convId, 'user', { k, arg: who(id) });
+    if (!t) return toast('不能这样操作');
+    await addMsg(convId, 'user', t, 'sys');
+    Router.render();
+  };
+
   screen().onclick = async e => {
-    if (e.target.closest('[data-act]')?.dataset.act !== 'del') return;
+    const a = e.target.closest('[data-act]')?.dataset.act;
+    if (a === 'invite') return doAct('拉人', GA.invitable(g, 'user').map(c => c.id));
+    if (a === 'kick') return doAct('踢人', g.members.filter(id => me === 'owner' || GA.role(g, id) === 'member'));
+    if (a === 'transfer') return doAct('转让群主', g.members);
+    if (a === 'setadm') {
+      const id = await actionSheet(g.members.map(x => ({ label: (GA.admins(g).includes(x) ? '撤销管理员：' : '设为管理员：') + who(x), value: x })));
+      if (!id) return;
+      const t = await GA.apply(convId, 'user', { k: GA.admins(g).includes(id) ? '撤管理' : '设管理', arg: who(id) });
+      if (t) { await addMsg(convId, 'user', t, 'sys'); Router.render(); }
+      return;
+    }
+    if (a !== 'del') return;
     if (!await confirmBox(`解散「${g.name}」（聊天记录一起删除）`)) return;
-    for (const m of await getMsgs(Conv.g(gid))) await DB.del('msgs', m.id);
+    for (const m of await getMsgs(convId)) await DB.del('msgs', m.id);
     await DB.del('groups', gid);
     S.groups = S.groups.filter(x => x.id !== gid);
     Router.home();
     Router.go('chats');
   };
 };
+
+// ===== 群主 / 管理员 / 群管理操作 =====
+const GroupAdmin = {
+  owner: g => g.owner || 'user',
+  admins: g => g.admins || [],
+  role(g, id) { return id === this.owner(g) ? 'owner' : this.admins(g).includes(id) ? 'admin' : 'member'; },
+  name(g, id) { return id === 'user' ? persona(g.personaId).name : charById(id)?.name || '?'; },
+  idByName(g, n) {
+    n = String(n).trim().replace(/^@/, '');
+    if (n === persona(g.personaId).name) return 'user';
+    return S.chars.find(c => c.name === n)?.id;
+  },
+  CMD: /^\[(改群名|换群头像|拉人|踢人|设管理|撤管理|转让群主)\]\s*(.*)$/,
+  parse(s) { const m = String(s).trim().match(this.CMD); return m ? { k: m[1], arg: m[2].trim() } : null; },
+  // 不在群里、而且被 id 认识的角色
+  invitable(g, id) {
+    return S.chars.filter(c => !g.members.includes(c.id) && (id === 'user' ? knows(g.personaId, c.id) : knows(id, c.id)));
+  },
+
+  // 执行一个群操作。成功返回系统提示文字，不允许就返回 null
+  async apply(convId, actor, { k, arg }) {
+    const g = Conv.parse(convId).group;
+    if (!g || !arg) return null;
+    const r = this.role(g, actor), boss = r !== 'member', who = this.name(g, actor);
+    const t = this.idByName(g, arg), tn = t ? this.name(g, t) : '';
+    let text = null;
+    switch (k) {
+      case '改群名':
+        g.name = arg.slice(0, 30);
+        text = `${who} 修改群名为「${g.name}」`;
+        break;
+      case '换群头像': {
+        if (!S.settings.image.url) return null;
+        try {
+          const { style, desc } = Media.parseStyle(arg);
+          const url = await Media.genImage(await Media.makePrompt(desc, style, charById(actor)));
+          if (!url) return null;
+          g.avatar = url;
+        } catch (e) { Log.add('群头像生成失败', e.message); return null; }
+        text = `${who} 更换了群头像`;
+        break;
+      }
+      case '拉人':
+        if (!boss || !t || t === 'user' || !this.invitable(g, actor).some(c => c.id === t)) return null;
+        g.members.push(t);
+        text = `${who} 邀请 ${tn} 加入了群聊`;
+        break;
+      case '踢人':
+        if (!boss || !t || t === 'user' || !g.members.includes(t) || this.role(g, t) === 'owner') return null;
+        if (r === 'admin' && this.role(g, t) === 'admin') return null;
+        g.members = g.members.filter(x => x !== t);
+        g.admins = this.admins(g).filter(x => x !== t);
+        text = `${tn} 被 ${who} 移出了群聊`;
+        break;
+      case '设管理':
+        if (r !== 'owner' || !t || t === actor || this.admins(g).includes(t)) return null;
+        if (t !== 'user' && !g.members.includes(t)) return null;
+        g.admins = [...this.admins(g), t];
+        text = `${who} 将 ${tn} 设为管理员`;
+        break;
+      case '撤管理':
+        if (r !== 'owner' || !this.admins(g).includes(t)) return null;
+        g.admins = this.admins(g).filter(x => x !== t);
+        text = `${who} 取消了 ${tn} 的管理员`;
+        break;
+      case '转让群主':
+        if (r !== 'owner' || !t || t === actor) return null;
+        if (t !== 'user' && !g.members.includes(t)) return null;
+        g.owner = t;
+        g.admins = this.admins(g).filter(x => x !== t);
+        text = `${who} 将群主转让给 ${tn}`;
+        break;
+    }
+    if (text) await DB.put('groups', g);
+    return text;
+  },
+
+  // 写进群聊提示词的群信息和操作格式
+  rules(g, members) {
+    const o = this.owner(g), on = this.name(g, o), pname = persona(g.personaId).name;
+    const adm = this.admins(g).map(id => this.name(g, id));
+    const out = [`【群信息】群主是${on}（这个群就是${on}建的）${adm.length ? '，管理员：' + adm.join('、') : '，没有管理员'}。`];
+    out.push(`- 改群名（任何人都可以，很少用）：单独一行 名字：[改群名]新群名`);
+    if (S.settings.image.url) out.push(`- 换群头像（任何人都可以，很少用）：单独一行 名字：[换群头像]画面描述`);
+    const bosses = members.filter(c => this.role(g, c.id) !== 'member');
+    if (bosses.length) {
+      out.push(`- 群管理（只有群主和管理员能用，单独一行，符合性格和剧情时才用，很少用）：名字：[拉人]对方名字 / 名字：[踢人]对方名字。管理员不能踢群主和其他管理员，谁都不能踢${pname}。`);
+      for (const c of bosses) {
+        const inv = this.invitable(g, c.id).map(x => x.name);
+        if (inv.length) out.push(`  ${c.name}可以拉进群的人：${inv.join('、')}`);
+      }
+      const oc = members.find(c => c.id === o);
+      if (oc) out.push(`- 群主${oc.name}还可以：名字：[设管理]名字 / 名字：[撤管理]名字 / 名字：[转让群主]名字`);
+    }
+    return out.join('\n');
+  },
+};
+

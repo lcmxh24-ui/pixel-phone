@@ -255,7 +255,8 @@ return r.join('\n');
       if (gap) msgs.push({ role: 'user', content: gap });
       msgs.push(m.type === 'ignore'
         ? { role: 'user', content: `（${ch.name}当时已读未回：${m.content}）` }
-        : { role: m.sender === 'user' ? 'user' : 'assistant', content: Lang.body(m, pid) });
+               : { role: m.sender === 'user' ? 'user' : 'assistant',
+            content: m.sender === 'user' && m.asNative ? `${Lang.body(m, pid)}（${p.name}这条实际是用${Lang.of(ch)}发的）` : Lang.body(m, pid) });
     });
     this.entries('dm', 'depth').sort((a, b) => b.depth - a.depth).forEach(e => {
       const c = this.render(e, vars);
@@ -295,7 +296,8 @@ ${Media.rules(true, p.name)}
 ${Lang.groupRule(members, p)}
 - @某人：在内容里写 @名字
 - 如果聊天让某个成员想私下找人聊（{{用户}}或他认识的其他人），另起一行写：[私聊]成员名→对方名字：原因。这一行不会显示在群里，偶尔使用。
-- 不写旁白、动作和心理描写。`;
+- 不写旁白、动作和心理描写。
+${GroupAdmin.rules(g, members)}`;
     const { st, dy } = this.split('group', vars);
     st.push(this.fill(rules, vars));
     const system = this.sysBlocks(st, dy);
@@ -307,6 +309,8 @@ ${Lang.groupRule(members, p)}
     const ats = names.filter(n => batch.some(m => m.content.includes('@' + n)));
     if (batch.some(m => m.content.includes('@全体成员'))) tail.unshift(`（${p.name}@了全体成员）`);
     else if (ats.length) tail.unshift(`（${p.name}@了${ats.join('、')}，被@的人要回应。）`);
+    const lt = Lang.groupTail(members, p);
+    if (lt) tail.push(lt);
 
     // 聊天记录按每 10 条切块，前面完整的块走缓存
     const lines = hist.map((m, k) => (this.gapNote(hist[k - 1], m) ? this.gapNote(hist[k - 1], m) + '\n' : '') + this.line(m, pid));
@@ -376,8 +380,8 @@ ${Media.rules(true)}`);
     return out;
   },
 
-  // 群聊 / 角色间私聊输出：名字：内容 + [私聊]A→B：原因
-  parseLines(text, names) {
+   // 群聊 / 角色间私聊输出：名字：内容 + [私聊]A→B：原因。cmds 为 true 时识别群管理操作
+  parseLines(text, names, { cmds = false } = {}) {
     const msgs = [], intents = [];
     for (let l of String(text).split(/\n+/)) {
       l = l.trim().replace(/^[*\-•]\s*/, '');
@@ -386,7 +390,10 @@ ${Media.rules(true)}`);
       if (it) { intents.push({ from: it[1].trim(), to: it[2].trim().replace(/^@/, ''), reason: it[3] }); continue; }
       const mm = l.match(/^[【\[]?(.{1,24}?)[】\]]?\s*[:：]\s*(.+)$/);
       const name = mm && names.find(n => n === mm[1].trim());
-      if (name) msgs.push({ name, ...this.typed(mm[2]) });
+      if (name) {
+        const cmd = cmds && GroupAdmin.parse(mm[2]);
+        msgs.push(cmd ? { name, cmd, type: 'sys', content: '' } : { name, ...this.typed(mm[2]) });
+      }
       else if (msgs.length) msgs.push({ name: msgs.at(-1).name, ...this.typed(l) });
     }
     return { msgs, intents };
