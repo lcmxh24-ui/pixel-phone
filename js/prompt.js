@@ -151,7 +151,8 @@ const Prompt = {
     const n = senderName(m, pid);
     if (m.type === 'ignore') return `（${n}已读未回：${m.content}）`;
     if (m.type === 'sys') return `（${m.content}）`;
-    return `${n}：${Lang.body(m, pid)}`;
+       const sa = Lang.sentAs(m);
+    return `${n}：${Lang.body(m, pid)}${sa ? `（实际是用${sa}发的）` : ''}`;
   },
 
   // 某个角色最近 24 小时在其他会话里的聊天
@@ -255,8 +256,8 @@ return r.join('\n');
       if (gap) msgs.push({ role: 'user', content: gap });
       msgs.push(m.type === 'ignore'
         ? { role: 'user', content: `（${ch.name}当时已读未回：${m.content}）` }
-               : { role: m.sender === 'user' ? 'user' : 'assistant',
-            content: m.sender === 'user' && m.asNative ? `${Lang.body(m, pid)}（${p.name}这条实际是用${Lang.of(ch)}发的）` : Lang.body(m, pid) });
+                       : { role: m.sender === 'user' ? 'user' : 'assistant',
+            content: Lang.sentAs(m) ? `${Lang.body(m, pid)}（${p.name}这条实际是用${Lang.sentAs(m)}发的）` : Lang.body(m, pid) });
     });
     this.entries('dm', 'depth').sort((a, b) => b.depth - a.depth).forEach(e => {
       const c = this.render(e, vars);

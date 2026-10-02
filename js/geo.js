@@ -51,6 +51,25 @@ const Lang = {
   knows(x, lang) { return this.set(x).has(lang); },
   viewer: pid => Lang.of(persona(pid)),
 
+  // 这个会话里可以选的语言：成员母语里和你不同的
+  choices(convId, pid) {
+    const v = this.of(persona(pid));
+    return [...new Set(Conv.members(convId).map(c => this.of(c)))].filter(L => L !== v);
+  },
+
+  // 这条用户消息在角色看来是什么语言。空字符串表示原文
+  sentAs(m) {
+    if (m.sender !== 'user' || m.keepRaw) return '';
+    if (m.asLang) return m.asLang;
+    // 兼容上一版的 asNative 标记
+    if (m.asNative) {
+      const i = Conv.parse(m.convId), c = i.type === 'dm' && charById(i.charId);
+      return c ? this.of(c) : '';
+    }
+    return '';
+  },
+
+
   // 拆分 "原文 [译]翻译"
   split(text) {
     const s = String(text ?? ''), i = s.indexOf('[译]');
@@ -126,7 +145,8 @@ ${members.map(c => `· ${c.name}：母语${this.of(c)}${String(c.langs || '').tr
 - 每个人默认用自己的母语发消息。就算前面的聊天记录大多是${v}，也不要跟着改。
 - 会别的语言的人，偶尔可以为了照顾别人换一种语言，但大部分时候还是用母语。
 ${foreign.length ? `- ${foreign.join('、')}的消息原文不是${v}。` : ''}
-- 不是${v}的消息，在同一行末尾加翻译，格式：名字：原文 [译]${v}翻译`;
+- 不是${v}的消息，在同一行末尾加翻译，格式：名字：原文 [译]${v}翻译
+- ${p.name}的消息后面标着"（实际是用某语言发的）"时，说明那条是直接用那种语言写的。懂这种语言的人能直接看懂，当作正常聊天，不要评论这件事；不懂的人按自己的情况反应。`;
   },
 
   // 放在群聊最后的语言提醒，位置越靠后 AI 越会遵守

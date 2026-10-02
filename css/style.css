@@ -285,3 +285,7 @@ body{position:fixed;inset:0}
 
 /* 朋友圈和评论里的译文 */
 .mo .tr{display:block;margin-top:4px;padding-top:4px;border-top:2px dashed var(--border);font-size:.85em;opacity:.75}
+
+/* 开了「译」模式但单独设为原文的消息 */
+.me .bubble.raw{background:var(--panel);border-style:dashed}
+

@@ -143,7 +143,7 @@ const ChatUI = {
     return sep + `<div class="msg ${mine ? 'me' : 'them'}" data-id="${m.id}">
       ${avatar(who.avatar, who.name)}
       <div class="col">${showName && !mine ? `<div class="sender">${esc(who.name)}</div>` : ''}
-        <div class="bubble" data-bubble>${body}${tr}${m.asNative ? '<div class="tr">🌐 对方看到的是他的母语</div>' : ''}</div></div></div>`;
+                <div class="bubble${m.keepRaw ? ' raw' : ''}" data-bubble ${m.keepRaw ? 'title="这条在对方看来是原文"' : ''}>${body}${tr}</div></div></div>`;
   },
      ctx(convId) {
     const i = Conv.parse(convId);
@@ -188,12 +188,15 @@ Views.chat = async ({ convId }) => {
   if (!title) return Router.back();
 
     const isG = i.type === 'g', isCC = i.type === 'cc';
-  // 单聊且母语不同时，可以开「我说的话在他看来是他的母语」
-  const dmCh = i.type === 'dm' ? charById(i.charId) : null;
-  const canAuto = dmCh && Lang.of(dmCh) !== Lang.of(persona(pid));
-  const autoOn = !!(canAuto && S.settings.autoLang?.[convId]);
-  const right = isG ? '<button class="btn ghost" data-act="gset" aria-label="群设置">⚙</button>'
-    : canAuto ? `<button class="btn ${autoOn ? '' : 'ghost'}" data-act="autolang" aria-pressed="${autoOn}" aria-label="我的消息在对方看来是${esc(Lang.of(dmCh))}">译${autoOn ? '✓' : ''}</button>` : '';
+    // 单聊 / 群聊：我发的消息在对方看来是哪种语言
+  const langOpts = (i.type === 'dm' || isG) ? Lang.choices(convId, pid) : [];
+  let autoLang = S.settings.autoLang?.[convId] || '';
+  if (autoLang === true) autoLang = langOpts[0] || ''; // 兼容上一版存的 true
+  if (!langOpts.includes(autoLang)) autoLang = '';
+  const langBtn = langOpts.length
+    ? `<button class="btn ${autoLang ? '' : 'ghost'}" data-act="autolang" aria-pressed="${!!autoLang}" aria-label="我的消息在对方看来的语言">译${autoLang ? '✓' : ''}</button>` : '';
+  const right = (langBtn || isG)
+    ? `<span class="flex" style="gap:4px;flex-wrap:nowrap">${langBtn}${isG ? '<button class="btn ghost" data-act="gset" aria-label="群设置">⚙</button>' : ''}</span>` : '';
   const typingText = isCC ? '他们正在聊…' : isG ? '有人正在输入…' : '对方正在输入…';
   const bottom = isCC
     ? `<div class="peekbar"><span>👀 你在偷看，他们不知道</span><button class="btn" data-act="more">让他们继续聊</button></div>`
@@ -229,10 +232,20 @@ Views.chat = async ({ convId }) => {
     const a = e.target.closest('[data-act]')?.dataset.act;
     if (a === 'media') return Media.pick(convId);
     if (a === 'gset') return Router.go('groupEdit', { gid: i.gid });
-    if (a === 'autolang') {
-      S.settings.autoLang = { ...(S.settings.autoLang || {}), [convId]: !autoOn };
+       if (a === 'autolang') {
+      let next = '';
+      if (!isG && langOpts.length === 1) next = autoLang ? '' : langOpts[0];
+      else {
+        next = await actionSheet([
+          ...langOpts.map(L => ({ label: (autoLang === L ? '✓ ' : '') + `我的消息在他们看来是${L}`, value: L })),
+          ...(autoLang ? [{ label: '关闭', value: 'off' }] : []),
+        ]);
+        if (!next) return;
+        if (next === 'off') next = '';
+      }
+      S.settings.autoLang = { ...(S.settings.autoLang || {}), [convId]: next };
       await saveSettings();
-      toast(!autoOn ? `已开启：你发的消息在${dmCh.name}看来是${Lang.of(dmCh)}` : '已关闭');
+      toast(next ? `已开启：你发的消息在对方看来是${next}` : '已关闭');
       return Router.render();
     }
     if (a === 'more') return Gen.cc(convId);
@@ -245,7 +258,7 @@ Views.chat = async ({ convId }) => {
       const inp = $('#inp'), text = inp.value.trim();
       if (!text) return;
       inp.value = '';
-      await addMsg(convId, 'user', text, 'text', autoOn ? { asNative: true } : {});
+      await addMsg(convId, 'user', text, 'text', autoLang ? { asLang: autoLang } : {});
       inp.focus();
     }
     if (a === 'reply') {
@@ -263,9 +276,11 @@ async function msgActions(m) {
   if (await Pet.tapInvite(m)) return;
   const items = [{ label: '复制', value: 'copy' }, { label: '编辑', value: 'edit' }];
   if (m.trans) items.splice(1, 0, { label: '复制译文', value: 'copytr' });
-  const ci = Conv.parse(m.convId), dmc = ci.type === 'dm' && charById(ci.charId);
-  if (m.sender === 'user' && m.type === 'text' && dmc && Lang.of(dmc) !== Lang.of(persona(ci.pid))) {
-    items.splice(1, 0, { label: m.asNative ? '这条在他看来改回原文' : `这条在他看来是${Lang.of(dmc)}`, value: 'native' });
+    const ci = Conv.parse(m.convId);
+  const lopts = m.sender === 'user' && m.type === 'text' && ['dm', 'g'].includes(ci.type) ? Lang.choices(m.convId, ci.pid) : [];
+  if (lopts.length) {
+    if (Lang.sentAs(m)) items.splice(1, 0, { label: '这条在对方看来改回原文', value: 'raw' });
+    else lopts.forEach(L => items.splice(1, 0, { label: `这条在对方看来是${L}`, value: 'as:' + L }));
   }
   if (m.sender !== 'user') items.push({ label: '重新生成这一轮', value: 'regen' });
   items.push({ label: '删除', value: 'del', danger: true });
@@ -278,7 +293,15 @@ async function msgActions(m) {
     const t = await editText('编辑消息', m.content);
     if (t?.trim()) { m.content = t.trim(); await DB.put('msgs', m); ChatUI.refresh(); }
   }
-  if (a === 'native') { m.asNative = !m.asNative; await DB.put('msgs', m); ChatUI.refresh(); }
+   if (a === 'raw') {
+    delete m.asLang; delete m.asNative; m.keepRaw = true;
+    await DB.put('msgs', m); ChatUI.refresh();
+  }
+  if (typeof a === 'string' && a.startsWith('as:')) {
+    m.asLang = a.slice(3); delete m.asNative; delete m.keepRaw;
+    await DB.put('msgs', m); ChatUI.refresh();
+  }
+
   if (a === 'del') { await DB.del('msgs', m.id); ChatUI.refresh(); }
   if (a === 'regen') await regenerate(m);
 }
