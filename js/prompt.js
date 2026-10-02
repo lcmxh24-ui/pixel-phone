@@ -167,6 +167,7 @@ const Prompt = {
       for (const m of ms) out.push({ ts: m.ts, t: `[${Conv.label(id, pid)}] ${this.line(m, pid)}` });
     }
     out.push(...await Moments.contextLines(charId, pid, since));
+    out.push(...Pet.contextLines(charId, pid));
     return out;
   },
 

@@ -1,3 +1,21 @@
+// 图片类型 → 英文风格词。想加新风格直接在这里加一行
+const IMG_STYLES = {
+  随拍: 'casual smartphone photo, natural lighting, slightly imperfect framing, everyday life, candid',
+  实拍: 'realistic photography, high detail, natural colors, shallow depth of field',
+  胶片: 'analog film photography, 35mm film, Kodak Portra 400, natural film grain, warm faded colors, soft highlights, slight light leak, nostalgic',
+  CCD: 'early 2000s CCD digital camera photo, compact digicam, direct on-camera flash, slightly overexposed, cool color cast, low dynamic range, sharp digital noise, y2k aesthetic, date stamp in corner',
+  国画: 'traditional Chinese ink painting, xieyi style, ink wash, rice paper texture, elegant brushwork, empty space',
+  水彩: 'watercolor painting, soft washes, visible paper texture, gentle color bleeding, hand painted',
+  素描: 'pencil sketch, graphite shading, sketchbook paper, hand drawn lines',
+  油画: 'oil painting, visible brush strokes, impasto, rich colors, canvas texture',
+  插画: 'digital illustration, clean lines, soft shading, warm colors',
+  像素画: 'pixel art, 16-bit retro game style, limited palette, crisp pixels',
+  涂鸦: 'cute doodle, crayon drawing, childlike hand drawn style, simple shapes',
+};
+// 拍照类，谁都能发；其余算画作，只有填了画风偏好的角色会发
+const PHOTO_STYLES = ['随拍', '实拍', '胶片', 'CCD'];
+const AVATAR_EN = 'square avatar, centered composition, single subject, close-up, clean background, profile picture';
+
 // 图片、表情包、识图、生图、换头像
 const Media = {
   stickers: [],
@@ -44,6 +62,29 @@ const Media = {
       ],
     }], { maxTokens: 300, temperature: 0.3 });
   },
+  // 拆出「类型|描述」，没写类型或类型不认识就用默认
+  parseStyle(s, def = '随拍') {
+    const m = String(s).match(/^\s*([^|｜]{1,6})\s*[|｜]\s*(.+)$/);
+    if (m && IMG_STYLES[m[1].trim()]) return { style: m[1].trim(), desc: m[2].trim() };
+    return { style: def, desc: String(s).replace(/^.*?[|｜]/, '').trim() };
+  },
+
+  // 中文描述 → 英文提示词 + 风格词
+  async makePrompt(desc, style, ch = null, purpose = 'photo') {
+    const st = IMG_STYLES[style] || IMG_STYLES.随拍;
+    let main = desc;
+    if (S.settings.image.translate !== false && S.settings.claude.key) {
+      try {
+        const sys = `You write prompts for an image generation model. Turn the Chinese description into ONE line of English, comma-separated visual keywords, under 50 words.
+Describe only what is visible: subject, setting, lighting, colors, mood. No style words (style is added separately). No text or watermarks.${purpose === 'avatar' ? ' It is a profile picture.' : ''} Output only the prompt.`;
+                const ctx = ch?.artStyle && !PHOTO_STYLES.includes(style) ? `\n（作者的画风偏好：${ch.artStyle}）` : '';
+        main = (await API.claude(sys, [{ role: 'user', content: desc + ctx }], { maxTokens: 200, temperature: 0.5 })).split('\n')[0].trim() || desc;
+      } catch (e) {
+        Log.add('生图提示词改写失败，改用原描述', e.message);
+      }
+    }
+    return [main, st, purpose === 'avatar' ? AVATAR_EN : ''].filter(Boolean).join(', ');
+  },
 
   // ===== 生图 =====
   async genImage(prompt) {
@@ -80,13 +121,20 @@ const Media = {
         return { voice: '[语音]', ignore: '[已读]', image: '[图片]', sticker: '[表情]', transfer: '[转账]' }[m.type] || m.content;
   },
 
-   rules(group = false, userName = '') {
+     rules(group = false, userName = '') {
     const p = group ? '名字：' : '';
     const r = [];
     const names = this.stickers.map(s => s.name).slice(0, 80);
     if (names.length) r.push(`- 发表情包：单独一行 ${p}[表情]表情名。只能用这些：${names.join('、')}。像真人一样偶尔用，别每次都发。`);
-    r.push(`- 发照片：单独一行 ${p}[图片]照片的画面描述（比如：窗外在下雨、刚做好的晚饭）。偶尔用。`);
-    r.push(`- 聊天里的图片显示为 [图片#编号：内容]。想换头像时单独一行 ${p}[换头像]#编号${S.settings.image.url ? `，或者 ${p}[换头像]生成：头像的画面和画风描述` : ''}。很少使用，真的想换才换。`);
+    const artists = S.chars.filter(c => c.artStyle).map(c => `${c.name}（${c.artStyle}）`);
+       const arts = Object.keys(IMG_STYLES).filter(k => !PHOTO_STYLES.includes(k));
+    r.push(`- 发图片：单独一行 ${p}[图片]类型|画面描述。偶尔用。
+  拍照类型：随拍（手机随手拍的日常，比如饭菜、街景、天空）、实拍（认真拍的风景或物品）、胶片（用胶片相机拍的，有颗粒和怀旧感）、CCD（老式卡片数码相机拍的，闪光灯直打，有千禧年感）。按角色的性格和习惯选，喜欢复古、爱拍照的人更常用胶片或 CCD。
+  画作类型：${arts.join('、')}。
+  ${artists.length ? `只有会画画的人才发画作：${artists.join('、')}，按各自画风选类型。其他人只发拍照类型。` : '大家都不画画，只发拍照类型。'}
+  画面描述写具体：拍了什么、在哪、光线和氛围。例如：${p}[图片]随拍|刚出锅的番茄炒蛋，旁边一碗米饭，厨房暖黄的灯光`);
+    r.push(`- 聊天里的图片显示为 [图片#编号：内容]。想换头像时单独一行 ${p}[换头像]#编号${S.settings.image.url ? `，或者 ${p}[换头像]生成：类型|头像的画面描述` : ''}。很少使用，真的想换才换。`);
+    if (r.push && Wallet?.rules) r.push(Wallet.rules(p, userName || '对方', !group || !!userName));
     return r.join('\n');
   },
 
@@ -117,10 +165,15 @@ const Media = {
       if (!s) return null; // 编了一个不存在的表情，直接丢掉
       return { ...it, content: s.name, extra: { url: s.url, desc: s.desc || '' } };
     }
-    if (it.type === 'photo') {
+       if (it.type === 'photo') {
+      const { style, desc } = this.parseStyle(it.content);
       let url = null;
-      try { url = await this.genImage(it.content); } catch (e) { console.warn(e); toast(e.message); }
-      return { sender: it.sender, type: 'image', content: it.content, extra: { url: url || '', desc: it.content, gen: true } };
+      if (S.settings.image.url) {
+        try { url = await this.genImage(await this.makePrompt(desc, style, charById(it.sender))); }
+        catch (e) { Log.add('生图失败，已显示成照片卡片', e.message); }
+      }
+      const label = `（${style}）${desc}`;
+      return { sender: it.sender, type: 'image', content: label, extra: { url: url || '', desc: label, gen: true, style } };
     }
     if (it.type === 'avatar') return this.changeAvatar(it.sender, it.content, convId);
     return it;
@@ -131,10 +184,13 @@ const Media = {
     if (!ch) return null;
     let url = null, desc = '';
     const gen = spec.match(/^生成\s*[:：]?\s*(.+)$/);
-    if (gen) {
-      try { url = await this.genImage(gen[1]); } catch (e) { console.warn(e); toast('换头像生图失败：' + e.message); }
-      desc = gen[1];
-    } else {
+       if (gen) {
+      const { style, desc: d } = this.parseStyle(gen[1], '插画');
+      try { url = await this.genImage(await this.makePrompt(d, style, ch, 'avatar')); }
+      catch (e) { Log.add('换头像生图失败', e.message); }
+      desc = `（${style}）${d}`;
+    }
+ else {
       const code = spec.replace(/[#＃\s]/g, '').slice(0, 4);
       const m = (await getMsgs(convId)).reverse().find(x => x.url && x.id.endsWith(code));
       if (m) { url = m.url; desc = m.desc || m.content; }

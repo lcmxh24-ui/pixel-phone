@@ -172,7 +172,7 @@ const Moments = {
   },
 
   // 角色发动态
-  async post(charId, pid, at = null) {
+    async post(charId, pid, at = null, topic = '') {
     const ch = charById(charId);
     if (!ch || !S.settings.claude.key) return null;
     const recent = (await Prompt.recentLines(charId, pid, '')).sort((a, b) => a.ts - b.ts).slice(-10).map(x => x.t).join('\n');
@@ -182,10 +182,12 @@ const Moments = {
       recent && `【最近的聊天】\n${recent}`, mine && `【最近发过的朋友圈，别重复】\n${mine}`,
      ...Prompt.styleBlocks(pid, ch.name), `【要求】
 - 像真人发朋友圈，符合性格。可以是日常、心情、吐槽、分享，可以和最近的事有关，但不会把私聊内容直接公开。
-- 先写文字，可以很短。如果配图，另起一行写 [图片]画面描述，最多 3 张，也可以不配图。
+- 先写文字，可以很短。如果配图，另起一行写 [图片]类型|画面描述，最多 3 张，也可以不配图。
+    类型：${PHOTO_STYLES.join('、')}（胶片和 CCD 是用复古相机拍的）${ch.artStyle ? `，或者你自己的画作（画风：${ch.artStyle}）：${Object.keys(IMG_STYLES).filter(k => !PHOTO_STYLES.includes(k)).join('、')}` : ''}。
 - 只输出朋友圈内容，不写解释。`].filter(Boolean).join('\n\n');
     let out;
-    try { out = await API.claude(system, [{ role: 'user', content: `现在是${nowText(at || Date.now())}。${Weather.text()}` }], { maxTokens: 500 }); }
+    try { out = await API.claude(system, [{ role: 'user', content: `现在是${nowText(at || Date.now())}。${Weather.text()}${topic ? '\n' + topic : ''}` }]
+, { maxTokens: 500 }); }
     catch (e) { console.warn(e); return null; }
     const text = [], images = [];
     for (const l of out.split('\n').map(s => s.trim()).filter(Boolean)) {
@@ -193,8 +195,12 @@ const Moments = {
       if (!m) { text.push(l); continue; }
       if (images.length >= 3) continue;
       let url = '';
-      try { url = (await Media.genImage(m[1])) || ''; } catch (e) { console.warn(e); }
-      images.push({ url, desc: m[1] });
+            const { style, desc } = Media.parseStyle(m[1]);
+      if (S.settings.image.url) {
+        try { url = (await Media.genImage(await Media.makePrompt(desc, style, ch))) || ''; }
+        catch (e) { Log.add('朋友圈配图生成失败', e.message); }
+      }
+      images.push({ url, desc: `（${style}）${desc}` });
     }
     const p = { id: uid(), author: charId, text: text.join('\n'), images, ts: at || Date.now(), likes: [], comments: [] };
     const l = await this.list(pid);

@@ -22,7 +22,7 @@ const DEFAULTS = {
   cache: { enabled: true },
   claude: { key: '', baseUrl: 'https://api.anthropic.com', model: 'claude-sonnet-4-5', maxTokens: 1024, temperature: 1 },
   embed: { url: '', key: '', model: '', dims: '' },
-  image: { url: '', key: '', model: '', extra: '' },
+  image: { url: '', key: '', model: '', extra: '', translate: true },
   tts: { enabled: false, url: '', key: '', model: '', voice: '' },
   memory: { every: 10, topK: 5, importantCap: 10, threshold: 0.2 },
   chat: { historyLimit: 40, allowIgnore: true },
@@ -409,6 +409,7 @@ Views.charEdit = async ({ id }) => {
       <label class="field"><span>名字</span><input data-k="name" value="${esc(c.name)}"></label>
       <label class="field"><span>头像链接</span><input data-k="avatar" value="${esc(c.avatar)}" placeholder="https://..." autocapitalize="off"></label>
       <label class="field"><span>角色设定</span><textarea data-k="persona" rows="10" placeholder="性格、背景、说话习惯……">${esc(c.persona)}</textarea></label>
+      <label class="field"><span>画风偏好（会画画才填，不填就只拍照）</span><input data-k="artStyle" value="${esc(c.artStyle || '')}" placeholder="比如：擅长水彩，偶尔画国画"></label>
     </div>
     <div class="card flex" style="flex-wrap:wrap;gap:8px">
       <button class="btn" data-act="chat" ${knows(pid, c.id) ? '' : 'disabled'}>发消息</button>
@@ -756,6 +757,7 @@ Views.settings = async () => {
       ${field('Key', 'image.key', { type: 'password' })}
       ${field('模型', 'image.model')}
       ${field('额外参数（JSON）', 'image.extra', { type: 'textarea', ph: '{"size":"512x512"}' })}
+      ${field('先把描述改写成英文提示词（效果更好，每张图多一次调用）', 'image.translate', { type: 'check' })}
       <button class="btn ghost" data-act="t-image">测试生图</button>
     </div>
     <h3>语音 TTS（可选）</h3><div class="card">
@@ -884,6 +886,7 @@ async function boot() {
   await Reading.init();
   await WB.init();
   await API.loadStats();
+  await Pet.init();
   await saveSettings();
   applyTheme();
   clock();
