@@ -110,6 +110,7 @@ Describe only what is visible: subject, setting, lighting, colors, mood. No styl
   // ===== 给 AI 看的格式 =====
    body(m, pid = activePid()) {
     if (m.type === 'transfer') return Wallet.text(m, pid);
+    if (m.type === 'redpacket') return Wallet.rpText(m, pid);
     if (m.type === 'petinvite') return `[一起领养邀请：${m.content}${m.name ? '，想叫「' + m.name + '」' : '，名字没定'}，${{ pending: '等对方回应', ok: '对方同意了', no: '对方拒绝了' }[m.status]}]`;
     if (m.type === 'voice') return '[语音]' + m.content;
     if (m.type === 'image') return `[图片#${m.id.slice(-4)}：${m.desc || m.content || '未识别'}]`;
@@ -119,7 +120,7 @@ Describe only what is visible: subject, setting, lighting, colors, mood. No styl
   },
 
   preview(m) {
-     return { voice: '[语音]', ignore: '[已读]', image: '[图片]', sticker: '[表情]', transfer: '[转账]', petinvite: '[领养邀请]' }[m.type] || m.content;
+         return { voice: '[语音]', ignore: '[已读]', image: '[图片]', sticker: '[表情]', transfer: '[转账]', redpacket: '[红包]', petinvite: '[领养邀请]' }[m.type] || m.content;
   },
 
     rules(group = false, userName = '') {
@@ -135,7 +136,7 @@ Describe only what is visible: subject, setting, lighting, colors, mood. No styl
   ${artists.length ? `只有会画画的人才发画作：${artists.join('、')}，按各自画风选类型。其他人只发拍照类型。` : '大家都不画画，只发拍照类型。'}
   画面描述写具体：拍了什么、在哪、光线和氛围。例如：${p}[图片]随拍|刚出锅的番茄炒蛋，旁边一碗米饭，厨房暖黄的灯光`);
     r.push(`- 聊天里的图片显示为 [图片#编号：内容]。想换头像时单独一行 ${p}[换头像]#编号${S.settings.image.url ? `，或者 ${p}[换头像]生成：类型|头像的画面描述` : ''}。很少使用，真的想换才换。`);
-    if (r.push && Wallet?.rules) r.push(Wallet.rules(p, userName || '对方', !group || !!userName));
+       r.push(Wallet.rules(p, userName || '对方', !group || !!userName, group && !!userName));
     r.push(Pet.rules(p));
     return r.join('\n');
   },
@@ -151,6 +152,8 @@ Describe only what is visible: subject, setting, lighting, colors, mood. No styl
     if ((m = s.match(/^\[领养\]\s*(.+)$/))) return { type: 'adopt', content: m[1].trim() };
     if ((m = s.match(/^\[宠物改名\]\s*(.+)$/))) return { type: 'petrename', content: m[1].trim() };
     if ((m = s.match(/^\[图片\]\s*(.+)$/) || s.match(/^\[图片(?:#\w+)?[:：]\s*(.+?)\]$/))) return { type: 'photo', content: m[1].trim() };
+    if ((m = s.match(/^\[抢红包\]\s*(.*)$/))) return { type: 'grab', content: m[1].trim() };
+    if ((m = s.match(/^\[红包\]\s*(.+)$/))) return { type: 'redpacket', content: m[1].trim() };
     if ((m = s.match(/^\[转账\]\s*(.+)$/))) return { type: 'transfer', content: m[1].trim() };
     if ((m = s.match(/^\[(收款|退还)\]\s*(.*)$/))) return { type: m[1] === '收款' ? 'accept' : 'refund', content: m[2].trim() };
     return { type: 'text', content: s };
@@ -164,6 +167,7 @@ Describe only what is visible: subject, setting, lighting, colors, mood. No styl
 
   // 发出前处理：表情名→图片，照片→生图，换头像→执行并返回系统提示
   async prepare(it, convId) {
+    if (['transfer', 'accept', 'refund', 'redpacket', 'grab'].includes(it.type)) return Wallet.prepare(it, convId);
     if (['transfer', 'accept', 'refund'].includes(it.type)) return Wallet.prepare(it, convId);
     if (it.type === 'sticker') {
       const s = this.findSticker(it.content);
@@ -234,6 +238,7 @@ Describe only what is visible: subject, setting, lighting, colors, mood. No styl
       { label: '🔗 图片链接', value: 'link' },
       { label: '🐸 表情包', value: 'sticker' },
       { label: '💸 转账', value: 'transfer' },
+      { label: '🧧 红包', value: 'rp' }
     ]);
     if (a === 'local') file.click();
     if (a === 'link') {
@@ -244,6 +249,7 @@ Describe only what is visible: subject, setting, lighting, colors, mood. No styl
     }
     if (a === 'sticker') this.stickerPicker(convId);
     if (a === 'transfer') Wallet.send(convId);
+  if (a === 'rp') Wallet.sendRP(convId);
   },
 
   async sendImage(convId, url) {

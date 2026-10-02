@@ -69,7 +69,7 @@ const Prompt = {
   styleBlocks(pid, names) {
     const vars = { ...this.baseVars(pid, Date.now()), 角色: names, char: names };
     return S.settings.entries
-      .filter(e => e.enabled && e.position === 'system' && ['写人原则', '中文语感', '时间与话题', '真实感'].includes(e.name))
+      .filter(e => e.enabled && e.position === 'system' && ['写人原则', '语感', '时间与话题', '真实感'].includes(e.name))
       .map(e => this.render(e, vars)).filter(Boolean);
   },
 
@@ -198,17 +198,29 @@ const Prompt = {
     return lines.join('\n');
   },
 
-  dmRules(known) {
+      dmRules(known, invGroups = [], blocked = false, iBlocked = false) {
     const r = ['【功能格式】（必须遵守）', '- 每条消息单独一行，不要在消息前加名字。', '- 发语音：单独一行写 [语音]语音里说的话'];
     if (S.settings.chat.allowIgnore) r.push('- 已读不回：只有当{{角色}}此刻确实不会回复时（在忙、睡着了、在生气、故意晾着对方等），整段回复只写一行 [不回]原因。原因用旁观者视角简短描述，比如：在开会，瞄了一眼手机又放下了。大部分时候应该正常回复。');
-    if (known) r.push(`- 私下找别人：如果聊到的内容让{{角色}}想私下联系某个认识的人，另起一行写 [私聊]对方名字：想找对方聊的原因。这一行对方看不到。可以找的人：${known}。不要频繁使用。`);
-        r.push(Quote.RULE);
-        r.push(Media.rules());
-return r.join('\n');
+    if (known) r.push(`- 私下找别人：如果聊到的内容让{{角色}}想私下联系某个认识的人（包括请对方帮忙说情、传话），另起一行写 [私聊]对方名字：想找对方聊的原因。这一行对方看不到。可以找的人：${known}。不要频繁使用。`);
+    if (invGroups.length) r.push(`- 拉{{用户}}进群：{{用户}}现在不在这些群里，{{角色}}是群主或管理员，能把{{用户}}拉进去：${invGroups.join('、')}。只有{{用户}}想进、而且{{角色}}愿意，或者{{角色}}自己想拉的时候才用，单独一行写 [拉进群]群名。`);
+    if (!blocked) r.push('- 拉黑：极少使用。只有{{角色}}被惹到极点、真的不想再收到{{用户}}的消息时，在最后单独一行写 [拉黑]。拉黑后{{角色}}还能看到{{用户}}的消息，但不会回复。');
+    if (iBlocked) r.push(`- {{用户}}把{{角色}}拉黑了，{{角色}}知道。{{角色}}发的消息{{用户}}能看到，但{{用户}}不会回。按{{角色}}的性格反应：道歉、解释、生气、冷处理都可以${known ? '，也可以用 [私聊] 找共同认识的人帮忙说情' : ''}。不要每次都在说这件事。`);
+    r.push(Quote.RULE);
+    r.push(Media.rules());
+    return r.join('\n');
   },
 
   proactiveHint(reason = '') {
     return `（此刻{{用户}}没有在和{{角色}}聊天，距离你们上一条消息已经过去了{{间隔}}。现在{{角色}}主动给{{用户}}发消息${reason ? '，原因：' + reason : '，可以分享此刻在做的事、延续之前的话题，或者只是想找{{用户}}说说话'}。直接写{{角色}}发出的消息。${reason ? '' : '如果{{角色}}此刻没有理由联系{{用户}}，只输出 [不发]'}）`;
+  },
+    // 群里没人说话时，让会主动的成员自己开口。away 表示你不在群里
+  groupProactiveHint(names, away = false) {
+    return `（距离群里上一条消息已经过去了{{间隔}}。${away ? '' : '{{用户}}此刻没有在群里说话。'}现在由群成员自然地开启或延续话题：分享此刻在做的事、吐槽、发现的东西，或者接着之前没聊完的事（隔得久就别硬接）。只能由${names.join('、')}发起，其他成员可以接话。${away ? '' : '不要@{{用户}}追着要回复。'}1 到 5 条就行。如果这个时间点大家都不会在群里说话，只输出 [不发]）`;
+  },
+
+  // 角色拉黑了你时，用这段代替正常回复
+  blockedHint() {
+    return '（{{角色}}之前把{{用户}}拉黑了。拉黑后{{角色}}仍然能看到{{用户}}发来的消息，但不会回复。根据这些消息和{{角色}}的性格判断：如果{{角色}}气消了、心软了，或者确实有必要回，第一行写 [解除拉黑]，后面接着写要发的消息；否则只输出 [不发]。）';
   },
 
   normalize(msgs) {
@@ -239,7 +251,9 @@ return r.join('\n');
       角色: ch.name, char: ch.name, 角色设定: ch.persona || '', char_persona: ch.persona || '',
       记忆: await Memory.retrieveText(ch.id, pid, query, ch.name),
       近况: (await this.recentLines(ch.id, pid, convId)).sort((a, b) => a.ts - b.ts).slice(-12).map(x => x.t).join('\n'),
-      关系: [rel.desc ? `${ch.name}和${p.name}：${rel.desc}` : '', known ? `${ch.name}认识的人：${known}` : ''].filter(Boolean).join('\n'),
+      关系: [rel.desc ? `${ch.name}和${p.name}：${rel.desc}` : '', known ? `${ch.name}认识的人：${known}` : '',
+        rel.theyBlock ? `${ch.name}已经把${p.name}拉黑了` : '',
+        rel.iBlock ? `${p.name}把${ch.name}拉黑了，${ch.name}知道` : ''].filter(Boolean).join('\n'),
       间隔: all.length ? gapText(now - all.at(-1).ts) : '很久',
       所在地: await Geo.placeText([ch], pid, now),
       世界书: wb.constant, 世界书触发: wb.triggered,
@@ -248,7 +262,9 @@ return r.join('\n');
     vars.memory = vars.记忆;
 
     const { st, dy } = this.split('dm', vars);
-    st.push(this.fill(this.dmRules(known), vars));
+        // 这个角色当群主或管理员、而你不在的群
+    const invGroups = S.groups.filter(g => g.personaId === pid && g.userIn === false && g.members.includes(ch.id) && GroupAdmin.role(g, ch.id) !== 'member').map(g => g.name);
+        st.push(this.fill(this.dmRules(known, invGroups, rel.theyBlock, rel.iBlock), vars));
     const lr = Lang.dmRule(ch, p);
     if (lr) st.push(this.fill(lr, vars));
     const system = this.sysBlocks(st, dy);
@@ -257,8 +273,9 @@ return r.join('\n');
     hist.forEach((m, k) => {
       const gap = this.gapNote(hist[k - 1], m);
       if (gap) msgs.push({ role: 'user', content: gap });
-      msgs.push(m.type === 'ignore'
+            msgs.push(m.type === 'ignore'
         ? { role: 'user', content: `（${ch.name}当时已读未回：${m.content}）` }
+        : m.type === 'sys' ? { role: 'user', content: `（${m.content}）` }
                              : { role: m.sender === 'user' ? 'user' : 'assistant',
             content: `[#${Quote.code(m)}] ${Quote.ref(m, all, pid)}` +
               (Lang.sentAs(m) ? `${Lang.body(m, pid)}（${p.name}这条实际是用${Lang.sentAs(m)}发的）` : Lang.body(m, pid)) });
@@ -271,24 +288,26 @@ return r.join('\n');
     return { system, messages: this.markCache(this.normalize(msgs)) };
   },
 
-    async buildGroup(g, convId) {
+     async buildGroup(g, convId, { hint = '', at = null } = {}) {
+    const now = at || Date.now(); // 离线补发时用补发的时间点
     const pid = g.personaId, p = persona(pid);
     const members = g.members.map(charById).filter(Boolean);
     const names = members.map(c => c.name);
     const all = await getMsgs(convId);
     const hist = this.window(all);
-    const query = hist.slice(-6).map(m => m.content).join('\n');
+    const query = hist.slice(-6).map(m => m.content).join('\n') || hint;
     const mem = [];
     for (const c of members) { const t = await Memory.retrieveText(c.id, pid, query, c.name); if (t) mem.push(t); }
     const wb = WB.build(g.members, WB.scan(all));
     const vars = {
-      ...this.baseVars(pid, Date.now()),
+      ...this.baseVars(pid, now),
       群名: g.name, 成员名单: names.join('、'), 角色: names.join('、'),
       成员设定: members.map(c => `· ${c.name}：${c.persona || '（无）'}`).join('\n\n'),
       记忆: mem.join('\n\n'), 关系: this.relationsText(members, pid),
       近况: await this.recentMulti(members, pid, convId),
       世界书: wb.constant, 世界书触发: wb.triggered,
-      所在地: await Geo.placeText(members, pid),
+      所在地: await Geo.placeText(members, pid, now),
+      间隔: all.length ? gapText(now - all.at(-1).ts) : '很久',
       角色设定: '',
     };
     const rules = `【输出格式】（必须遵守）
@@ -306,15 +325,20 @@ ${Quote.RULE}
 ${GroupAdmin.rules(g, members)}`;
     const { st, dy } = this.split('group', vars);
     st.push(this.fill(rules, vars));
+    if (g.userIn === false) st.push(this.fill(`【注意】{{用户}}现在不在这个群里（${g.byChar ? '从来没进过' : '已经退出了'}），看不到群消息。上面说的群成员不包括{{用户}}。大家说话不用顾忌{{用户}}，也可以聊到{{用户}}。`, vars));
     const system = this.sysBlocks(st, dy);
 
     let i = hist.length;
     while (i > 0 && hist[i - 1].sender === 'user') i--;
     const batch = hist.slice(i);
     const tail = this.entries('group', 'depth').map(e => this.render(e, vars)).filter(Boolean);
-    const ats = names.filter(n => batch.some(m => m.content.includes('@' + n)));
-    if (batch.some(m => m.content.includes('@全体成员'))) tail.unshift(`（${p.name}@了全体成员）`);
-    else if (ats.length) tail.unshift(`（${p.name}@了${ats.join('、')}，被@的人要回应。）`);
+    // 主动发言时，不再提醒回应你以前的@
+    if (!hint) {
+      const ats = names.filter(n => batch.some(m => m.content.includes('@' + n)));
+      if (batch.some(m => m.content.includes('@全体成员'))) tail.unshift(`（${p.name}@了全体成员）`);
+      else if (ats.length) tail.unshift(`（${p.name}@了${ats.join('、')}，被@的人要回应。）`);
+    }
+    if (hint) tail.push(this.fill(hint, vars));
     const lt = Lang.groupTail(members, p);
     if (lt) tail.push(lt);
 
@@ -351,18 +375,27 @@ ${GroupAdmin.rules(g, members)}`;
     if (place) block.push('【所在地与时差】\n' + place);
     const lr = Lang.ccRule(a, b, pid);
     if (lr) block.push(lr);
+    // 拉黑状态：本人知道，对方只有听说过才知道
+    for (const c of [a, b]) {
+      const r = getRel(pid, c.id);
+      if (r.iBlock) block.push(`【${c.name}知道】${p.name}把${c.name}拉黑了。对方不一定知道，除非听${c.name}或${p.name}说过。`);
+      if (r.theyBlock) block.push(`【${c.name}知道】${c.name}把${p.name}拉黑了。对方不一定知道，除非听${c.name}或${p.name}说过。`);
+    }
     block.push(`【两人的关系】\n${getRel(a.id, b.id).desc || '认识'}`);
     const rec = await this.recentMulti([a, b], pid, convId);
     if (rec) block.push(`【两人最近在别处的聊天】\n${rec}`);
     block.push(...this.styleBlocks(pid, `${a.name}、${b.name}`));
-        block.push(`【要求】
+            const blockers = [a, b].filter(c => getRel(pid, c.id).theyBlock).map(c => c.name);
+    block.push(`【要求】
 - 只写两人发出的消息，每行一条，格式：名字：内容。名字只能是${a.name}或${b.name}。
 - 像真人聊天：多数是短句，可以连发，偶尔有长消息。不写旁白、动作和心理描写。
 - 注意信息差：每个人只知道自己参与过的聊天和自己的记忆。
 - 一共 4 到 14 条，聊到自然结束或暂时告一段落。
 - 发语音：名字：[语音]语音里说的话
 ${Media.rules(true)}
-${Quote.RULE}`);
+${Quote.RULE}
+- 聊完如果某人想去私下找${p.name}或别人（比如答应帮忙说情、传话），另起一行写：[私聊]名字→对方名字：原因。偶尔使用。${blockers.length ? `
+- ${blockers.join('、')}拉黑了${p.name}。如果被说动了、气消了，单独一行写：名字：[解除拉黑]` : ''}`);
     const log = hist.map((m, k) => (this.gapNote(hist[k - 1], m) ? this.gapNote(hist[k - 1], m) + '\n' : '') + this.line(m, pid, hist)).join('\n');
     const task = `${log ? '【之前的聊天】\n' + log + '\n\n' : ''}现在是${nowText(now)}。${reason
       ? `这次是${a.name}主动找${b.name}，原因：${reason}。`
@@ -373,12 +406,15 @@ ${Quote.RULE}`);
   // 单聊输出：普通消息 / [语音] / [不回] / [不发] / [私聊]
   parseDM(text, ch) {
     const nameRe = new RegExp('^[【\\[]?' + escRe(ch.name) + '[】\\]]?\\s*[:：]\\s*');
-    const out = { msgs: [], intents: [], ignore: null, skip: false };
+    const out = { msgs: [], intents: [], invites: [], ignore: null, skip: false, block: false, unblock: false };
     for (let l of String(text).split(/\n+/)) {
       l = l.trim().replace(Quote.TAG, '').replace(nameRe, '').replace(Quote.TAG, '');
       if (!l || /^[-—*_=]{3,}$/.test(l)) continue;
       let m;
       if (/^\[不发\]/.test(l)) { out.skip = true; continue; }
+      if (/^\[解除拉黑\]/.test(l)) { out.unblock = true; continue; }
+      if (/^\[拉黑\]/.test(l)) { out.block = true; continue; }
+      if ((m = l.match(/^\[拉进群\]\s*(.+)$/))) { out.invites.push(m[1].trim()); continue; }
       if ((m = l.match(/^\[不回\]\s*(.*)$/))) { out.ignore = m[1].trim() || '看了一眼，没有回'; continue; }
       if ((m = l.match(/^\[私聊\]\s*(.+?)\s*[:：]\s*(.+)$/))) { out.intents.push({ to: m[1].replace(/^@/, ''), reason: m[2] }); continue; }
             const q = Quote.take(l);
@@ -409,16 +445,19 @@ ${Quote.RULE}`);
 
   // 群聊 / 角色间私聊输出：名字：内容 + [私聊]A→B：原因。cmds 为 true 时识别群管理操作
   parseLines(text, names, { cmds = false } = {}) {
-    const msgs = [], intents = [];
+        const msgs = [], intents = [], unblocks = [];
     for (let l of String(text).split(/\n+/)) {
       l = l.trim().replace(/^[*\-•]\s*/, '').replace(Quote.TAG, '');
       if (!l || /^[-—*_=]{3,}$/.test(l)) continue;
+      if (/^\[不发\]/.test(l)) continue;
       const it = l.match(/^\[私聊\]\s*(.+?)\s*(?:→|->|=>|>)\s*(.+?)\s*[:：]\s*(.+)$/);
       if (it) { intents.push({ from: this.matchName(names, it[1]) || it[1].trim(), to: it[2].trim().replace(/^@/, ''), reason: it[3] }); continue; }
       const mm = l.match(/^[【\[]?(.{1,24}?)[】\]]?\s*[:：]\s*(.+)$/);
       const name = mm && this.matchName(names, mm[1]);
            if (name) {
         const q = Quote.take(mm[2]);
+        if (/^\[不发\]/.test(q.rest)) continue;
+        if (/^\[解除拉黑\]/.test(q.rest)) { unblocks.push(name); continue; }
         const cmd = cmds && GroupAdmin.parse(q.rest);
         msgs.push(cmd ? { name, cmd, type: 'sys', content: '' } : { name, ...this.typed(q.rest), quote: q.code });
       }
@@ -429,7 +468,7 @@ ${Quote.RULE}`);
         msgs.push({ name: msgs.at(-1).name, ...this.typed(l) });
       }
     }
-    return { msgs, intents };
+        return { msgs, intents, unblocks };
   },
 };
 

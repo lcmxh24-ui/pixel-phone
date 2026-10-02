@@ -27,7 +27,7 @@ const DEFAULTS = {
   translate: { show: true },
   memory: { every: 10, topK: 5, importantCap: 10, threshold: 0.2 },
   chat: { historyLimit: 40, allowIgnore: true },
-  proactive: { enabled: true, interval: 30, chance: 0.6, catchup: 2, ccRate: 0.35, intents: true, momentRate: 0.2 },
+  proactive: { enabled: true, interval: 30, chance: 0.6, catchup: 2, ccRate: 0.35, intents: true, momentRate: 0.2, groupRate: 0.25, groupCreateRate: 0.05 },
   weather: { city: '', lat: null, lon: null },
   wallet: { balance: 1000 },
   personas: [],
@@ -188,6 +188,14 @@ async function setRel(a, b, patch) {
   await DB.put('kv', { id: 'rels', value: S.rels });
 }
 
+// 你拉黑 / 解除拉黑角色：在私聊里留一条系统提示，角色能看到
+async function setBlock(pid, cid, on) {
+  await setRel(pid, cid, { iBlock: on });
+  const c = charById(cid);
+  await addMsg(Conv.dm(pid, cid), 'user',
+    `${persona(pid).name} ${on ? '把' + c.name + '拉黑了' : '解除了对' + c.name + '的拉黑'}`, 'sys');
+}
+
 // ===== 消息与未读 =====
 async function addMsg(convId, sender, content, type = 'text', extra = {}) {
   const m = { id: uid(), convId, sender, content, type, ts: Date.now(), ...extra };
@@ -266,7 +274,7 @@ const Router = {
     const c = this.cur();
     const v = Views[c.name];
     if (!v) { screen().innerHTML = topbar('未找到') + '<div class="body">页面不存在</div>'; return; }
-    try { await v(c.params); } catch (e) { console.error(e); toast('页面出错：' + e.message); }
+        try { await v(c.params); } catch (e) { console.error(e); Log.add('页面出错：' + c.name, e.message); }
   },
 };
 document.addEventListener('click', e => { if (e.target.closest('[data-act="back"]')) Router.back(); });
@@ -343,10 +351,10 @@ async function switchPersona() {
   Router.render();
 }
 
-// 当前人设可见的会话：认识的角色单聊 + 自己的群
+// 当前人设可见的会话：认识的角色单聊 + 自己的群（包括退出的群，不包括角色自己建、你没进过的群）
 function chatIds(pid) {
   const ids = S.chars.filter(c => knows(pid, c.id)).map(c => Conv.dm(pid, c.id));
-  for (const g of S.groups) if (g.personaId === pid) ids.push(Conv.g(g.id));
+  for (const g of S.groups) if (g.personaId === pid && (g.userIn !== false || !g.byChar)) ids.push(Conv.g(g.id));
   return ids;
 }
 
@@ -360,7 +368,7 @@ Views.chats = async () => {
     const c = isG ? null : charById(i.charId);
     rows.push({
       id, ts: last?.ts || 0, u,
-      name: isG ? i.group.name : c.name,
+      name: isG ? i.group.name + (i.group.userIn === false ? '（已退出）' : '') : c.name,
       av: isG ? avatar(i.group.avatar, i.group.name) : avatar(c.avatar, c.name),
       pv: last ? preview(last, isG, pid) : '（还没有消息）',
     });
@@ -432,9 +440,11 @@ Views.charEdit = async ({ id }) => {
       <button class="btn" data-act="chat" ${knows(pid, c.id) ? '' : 'disabled'}>发消息</button>
       <button class="btn ghost" data-act="mems">查看记忆（${esc(persona(pid).name)}）</button>
       <button class="btn ghost" data-act="clear">清空记录 / 记忆</button>
+      <button class="btn ghost" data-act="block">${getRel(pid, c.id).iBlock ? '解除拉黑' : '拉黑'}</button>
       <button class="btn danger" data-act="del">删除角色</button>
     </div>
     ${knows(pid, c.id) ? '' : `<p class="empty">${esc(persona(pid).name)}和${esc(c.name)}还不认识，去「关系网」里设置后才能私聊。</p>`}
+    ${getRel(pid, c.id).theyBlock ? `<p class="empty">${esc(c.name)} 把你拉黑了。你发的消息 TA 能看到，但不会回，除非 TA 自己解除。</p>` : ''}
   </div>`;
   $$('[data-k]').forEach(el => el.onchange = async () => {
     c[el.dataset.k] = el.value.trim();
@@ -481,6 +491,13 @@ Views.charEdit = async ({ id }) => {
         Memory._q = { text: null, vec: null };
       }
       toast('已清空');
+    }
+       if (a === 'block') {
+      const on = !getRel(pid, c.id).iBlock;
+      if (on && !await confirmBox(`拉黑 ${c.name}（TA 会知道。TA 还能给你发消息，你解除前不能回）`)) return;
+      await setBlock(pid, c.id, on);
+      toast(on ? '已拉黑' : '已解除拉黑');
+      return Router.render();
     }
     if (a === 'chat') Router.go('chat', { convId: Conv.dm(pid, c.id) });
     if (a === 'mems') Router.go('mems', { charId: c.id });
@@ -811,6 +828,8 @@ Views.settings = async () => {
       ${field('角色间私聊占比（0~1）', 'proactive.ccRate', { type: 'number', step: '0.05' })}
       ${field('聊天中触发"想私聊某人"', 'proactive.intents', { type: 'check' })}
       ${field('角色发朋友圈占比（0~1）', 'proactive.momentRate', { type: 'number', step: '0.05' })}
+      ${field('角色在群里主动说话占比（0~1）', 'proactive.groupRate', { type: 'number', step: '0.05' })}
+      ${field('角色自己建群的概率（0~1，每次主动行为时）', 'proactive.groupCreateRate', { type: 'number', step: '0.01' })}
     </div>
     <h3>生图接口（留空待填）</h3><div class="card">
       ${field('接口地址', 'image.url')}
@@ -958,8 +977,13 @@ async function boot() {
   applyTheme();
   clock();
   Router.home();
-  window.Social?.start?.();
+  if (typeof Social !== 'undefined') Social.start();
 }
 
-// 等 chat.js、social.js 都加载完再启动
-window.addEventListener('load', () => boot().catch(e => { console.error(e); toast('启动失败：' + e.message, 5000); }));
+// 启动失败时，把错误直接显示在屏幕上（这时进不了记忆体检页）
+window.addEventListener('load', () => boot().catch(e => {
+  console.error(e);
+  Log.add('启动失败', e.message);
+  screen().innerHTML = `<div class="body"><p class="empty">启动失败：${esc(e.message)}</p>
+    ${Log.list.slice(0, 5).map(x => `<p class="empty">${esc(x.title)} ${esc(x.detail)}</p>`).join('')}</div>`;
+}));

@@ -30,8 +30,8 @@ const Social = {
       if (Date.now() - lp < Math.max(1, Number(p.interval)) * 60e3) return;
       await this.setKv('lastProactive', Date.now());
       if (Math.random() < Number(p.chance)) await this.act();
-    } catch (e) {
-      console.warn('主动消息出错', e);
+       } catch (e) {
+      Log.add('主动消息出错', e.message);
     } finally {
       this._running = false;
     }
@@ -57,7 +57,7 @@ const Social = {
     return out;
   },
 
-   // 随机一次主动行为：角色找你，或两个角色互相聊。只针对当前人设
+    // 随机一次主动行为：朋友圈 / 角色建群 / 群里说话 / 角色互聊 / 角色找你。只针对当前人设
   async act(at = null) {
     const pid = activePid(), p = S.settings.proactive;
     const ref = at || Date.now();
@@ -65,9 +65,31 @@ const Social = {
     const active = c => c.proactive !== false;
     const posters = S.chars.filter(c => knows(pid, c.id) && active(c));
     if (posters.length && Math.random() < Number(p.momentRate ?? 0.2)) return Moments.post(pick(posters).id, pid, at);
+
+    // 角色自己建群，没有你
+    if (Math.random() < Number(p.groupCreateRate ?? 0.05)) {
+      const made = await GroupAdmin.charCreate(pid, at);
+      if (made) return Gen.group(made.g.id, { at, hint: `（${made.owner.name}刚建了这个群${made.reason ? '，原因：' + made.reason : ''}。由${made.owner.name}先开口，其他人自然接话。2 到 6 条。）` });
+    }
+
+    // 群里主动说话（包括你退出的、你不在的群）。10 分钟内有人说过话的不算
+    const groups = [];
+    for (const g of S.groups) {
+      if (g.personaId !== pid) continue;
+      const starters = g.members.map(charById).filter(c => c && active(c));
+      if (!starters.length) continue;
+      const last = await lastMsg(Conv.g(g.id));
+      if (!last || ref - last.ts > 10 * 60e3) groups.push({ g, starters });
+    }
+    if (groups.length && Math.random() < Number(p.groupRate ?? 0.25)) {
+      const { g, starters } = pick(groups);
+      return Gen.group(g.id, { at, hint: Prompt.groupProactiveHint(starters.map(c => c.name), g.userIn === false) });
+    }
+
     const dms = [];
     for (const c of S.chars) {
-      if (!knows(pid, c.id) || !active(c)) continue;
+      // 拉黑了你的角色不会主动找你
+      if (!knows(pid, c.id) || !active(c) || getRel(pid, c.id).theyBlock) continue;
       const last = await lastMsg(Conv.dm(pid, c.id));
       // 10 分钟内聊过的不主动找
       if (!last || ref - last.ts > 10 * 60e3) dms.push(c);
@@ -91,7 +113,7 @@ const Social = {
     toName = String(toName).trim();
     let it = null;
     if (toName === persona(pid).name) {
-      if (knows(pid, fromId)) it = { kind: 'dm' };
+    if (knows(pid, fromId) && !getRel(pid, fromId).theyBlock) it = { kind: 'dm' };
     } else {
       const t = S.chars.find(c => c.name === toName);
       if (t && knows(fromId, t.id)) it = { kind: 'cc', to: t.id };
@@ -117,7 +139,7 @@ const Social = {
   },
 };
 
-// ===== 偷看：角色之间的私聊 =====
+// ===== 偷看：角色之间的私聊 + 角色自己建的群 =====
 Views.peek = async () => {
   const pid = activePid(), rows = [];
   for (let i = 0; i < S.chars.length; i++) for (let j = i + 1; j < S.chars.length; j++) {
@@ -126,13 +148,27 @@ Views.peek = async () => {
     if (last) rows.push({ id, a, b, last });
   }
   rows.sort((x, y) => y.last.ts - x.last.ts);
+  // 角色建的、你不在里面的群
+  const gRows = [];
+  for (const g of S.groups) {
+    if (g.personaId !== pid || !g.byChar || g.userIn !== false) continue;
+    gRows.push({ g, last: await lastMsg(Conv.g(g.id)) });
+  }
+  gRows.sort((x, y) => (y.last?.ts || 0) - (x.last?.ts || 0));
   screen().innerHTML = topbar('偷看', '<button class="btn ghost" data-act="new" aria-label="让两个角色聊天">＋</button>') +
-    `<div class="body list">${rows.length ? rows.map(r => `<button class="item" data-id="${esc(r.id)}">
+    `<div class="body list">
+    ${gRows.length ? '<h3>他们的群</h3>' + gRows.map(r => `<button class="item" data-gid="${esc(r.g.id)}">
+      ${avatar(r.g.avatar, r.g.name)}
+      <div class="grow"><div class="flex" style="justify-content:space-between"><b>${esc(r.g.name)}（${r.g.members.length}）</b>
+      <small>${r.last ? ChatUI.timeLabel(r.last.ts) : ''}</small></div>
+      <small class="ellipsis">${r.last ? esc(preview(r.last, true, pid)) : '（还没有消息）'}</small></div></button>`).join('') : ''}
+    ${gRows.length && rows.length ? '<h3>私聊</h3>' : ''}
+    ${rows.length ? rows.map(r => `<button class="item" data-id="${esc(r.id)}">
       <div class="pair">${avatar(r.a.avatar, r.a.name, 'sm')}${avatar(r.b.avatar, r.b.name, 'sm')}</div>
       <div class="grow"><div class="flex" style="justify-content:space-between"><b>${esc(r.a.name)} & ${esc(r.b.name)}</b>
       <small>${ChatUI.timeLabel(r.last.ts)}</small></div>
       <small class="ellipsis">${esc(preview(r.last, true, pid))}</small></div></button>`).join('')
-      : '<p class="empty">角色之间还没私聊过。点右上角 ＋ 让两个认识的角色聊聊。</p>'}</div>`;
+      : gRows.length ? '' : '<p class="empty">角色之间还没私聊过。点右上角 ＋ 让两个认识的角色聊聊。</p>'}</div>`;
   screen().onclick = async e => {
     if (e.target.closest('[data-act="new"]')) {
       const pairs = Social.knownPairs();
@@ -144,6 +180,8 @@ Views.peek = async () => {
       Gen.cc(id);
       return;
     }
+    const gi = e.target.closest('[data-gid]');
+    if (gi) return Router.go('group', { gid: gi.dataset.gid });
     const it = e.target.closest('[data-id]');
     if (it) Router.go('peekView', { convId: it.dataset.id });
   };

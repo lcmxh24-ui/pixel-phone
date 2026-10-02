@@ -100,8 +100,14 @@ const Pet = {
 
   // ===== 属性 =====
   // 按 15 分钟一段推进，这样跨越睡觉时间、离线很久也算得准
+  // 离线补算时，角色主人在每一段里也会按 autoCare 的规则照顾
   decay(p, now = Date.now()) {
     let t = Math.max(p.ts || now, now - 14 * 86400e3);
+    // 间隔超过 5 分钟才算离线补算；在线时每分钟 tick 由 autoCare 负责
+    const offline = now - t > 5 * 60e3;
+    const cs = offline ? this.charOwners(p) : [];
+    const withMe = this.hasPersona(p);
+    const done = {}; // 离线期间各类照顾的次数，最后汇总写进动态
     while (t < now) {
       const step = Math.min(15 * 60e3, now - t), h = step / 3600e3, zz = this.asleep(p, t), k = zz ? 0.5 : 1;
       p.poopAcc = (p.poopAcc || 0) + h / 3.5 * k;
@@ -114,10 +120,46 @@ const Pet = {
       p.neglect = bad ? (p.neglect || 0) + h : Math.max(0, (p.neglect || 0) - h / 2);
       if (!p.sick && p.neglect >= 6) { p.sick = true; this.log(p, 'sys', '生病了，需要看医生'); }
       if (!zz && p.hunger > 50 && p.clean > 50 && p.happy > 50) this.grow(p, h);
+      // 离线时角色照顾一次（按这一段的时长换算概率）
+      if (cs.length) this.offlineCare(p, t, step / 60e3, withMe, done);
       t += step;
     }
     p.ts = now;
+    // 汇总写一条动态，避免离线几小时刷满日志
+    if (cs.length) {
+      const TXT = { feed: '喂了它', clean: '铲了屎', bath: '给它洗了澡', pet: '摸了摸它', doctor: '带它看了医生，已经好了' };
+      for (const [kind, n] of Object.entries(done)) {
+        this.log(p, pick(cs).id, `（你不在的时候）${TXT[kind]}${n > 1 ? ` ×${n}` : ''}`);
+      }
+    }
   },
+
+  // 离线补算用的简化照顾：规则和 autoCare 一致，但直接改属性，不放特效、不写单条日志
+  offlineCare(p, t, minutes, withMe, done) {
+    // autoCare 是"每分钟概率 q"，换算成这一段的概率
+    const roll = q => Math.random() < 1 - (1 - q) ** minutes;
+    const zz = this.asleep(p, t);
+    let kind = null;
+    if (p.sick) {
+      if (roll(withMe ? 0.03 : 0.2)) kind = 'doctor';
+    } else {
+      const lim = withMe ? 25 : 40;
+      const need = zz
+        ? (p.poop >= 3 ? 'clean' : null)
+        : p.hunger < lim ? 'feed' : p.poop >= (withMe ? 3 : 2) ? 'clean' : p.clean < lim - 10 ? 'bath' : p.happy < lim ? 'pet' : null;
+      if (need && roll(withMe ? 0.15 : 0.5)) kind = need;
+    }
+    if (!kind) return;
+    // 效果和 act 里一致；角色看医生不扣钱包
+    if (kind === 'feed') { p.hunger = clamp100(p.hunger + 35); p.happy = clamp100(p.happy + 3); p.poopAcc = (p.poopAcc || 0) + 0.25; }
+    if (kind === 'clean') { p.poop = 0; p.clean = clamp100(p.clean + 10); }
+    if (kind === 'bath') { p.clean = 100; p.happy = clamp100(p.happy + (p.sp === 'cat' ? -8 : 6)); }
+    if (kind === 'pet') p.happy = clamp100(p.happy + 8);
+    if (kind === 'doctor') { p.sick = false; p.neglect = 0; p.happy = clamp100(p.happy + 5); }
+    this.grow(p, 2);
+    done[kind] = (done[kind] || 0) + 1;
+  },
+
   grow(p, amount) {
     if (p.sick) return;
     const b = this.stage(p);

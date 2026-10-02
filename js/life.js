@@ -16,22 +16,38 @@ const Wallet = {
     await DB.put('kv', { id: 'txns', value: list.slice(0, 500) });
   },
 
+  who: (id, pid) => id === 'user' ? persona(pid).name : charById(id)?.name || '?',
+
   // 给 AI 看的文字
   text(m, pid) {
-    const to = m.to === 'user' ? persona(pid).name : charById(m.to)?.name || '?';
-    return `[转账#${m.id.slice(-4)}：${senderName(m, pid)}转给${to} ${this.fmt(m.amount)}${m.note ? '，备注：' + m.note : ''}，${this.ST[m.status]}]`;
+    if (m.type === 'redpacket') return this.rpText(m, pid);
+    return `[转账#${m.id.slice(-4)}：${senderName(m, pid)}转给${this.who(m.to, pid)} ${this.fmt(m.amount)}${m.note ? '，备注：' + m.note : ''}，${this.ST[m.status]}]`;
   },
 
   render(m, pid) {
-    const to = m.to === 'user' ? persona(pid).name : charById(m.to)?.name || '?';
+    if (m.type === 'redpacket') {
+      const left = this.rpLeft(m), mine = (m.grabs || []).find(g => g.id === 'user');
+      const st = mine ? `已领取 ${this.fmt(mine.amt)}` : left.n > 0 ? '点击领取' : '已被领完';
+      return `<div class="tf rp ${mine ? 'got' : ''} ${left.n > 0 ? '' : 'done'}"><div class="tf-amt">🧧 ${esc(m.note || '恭喜发财')}</div>
+        <div class="tf-note">${m.count} 个 · 共 ${this.fmt(m.amount)}</div><div class="tf-st">${esc(st)}</div></div>`;
+    }
+    const to = this.who(m.to, pid);
     const st = m.status === 'pending' ? (m.to === 'user' ? '点击收款' : `等待${to}收款`) : this.ST[m.status];
     return `<div class="tf ${m.status}"><div class="tf-amt">💸 ${this.fmt(m.amount)}</div>
       <div class="tf-note">${esc(m.note || '转账')}</div><div class="tf-st">${esc(st)}</div></div>`;
   },
 
-  rules(p, to, canAccept) {
-    const r = [`- 转账：单独一行 ${p}[转账]金额 备注，转给${to}。很少用，只在剧情需要时（请客、还钱、表达心意）。`];
-    if (canAccept) r.push(`- 有人转账给你、状态是待收款时，决定收不收：单独一行 ${p}[收款] 或 ${p}[退还]。`);
+  // multi：群聊 / 共读，可以指定收款人、发红包
+  rules(p, to, canAccept, multi = false) {
+    const r = [];
+    if (multi) {
+      r.push(`- 转账：单独一行 ${p}[转账]收款人名字 金额 备注。收款人可以是${to}或群里其他人，不能转给自己。很少用，只在剧情需要时（请客、还钱、表达心意）。`);
+      r.push(`- 发红包：单独一行 ${p}[红包]总金额 个数 祝福语，比如 ${p}[红包]88 5 恭喜发财。很少用，节日、庆祝、请客、道歉或活跃气氛时才发。`);
+      r.push(`- 抢红包：聊天记录里有还没领完的 [红包#编号：…] 时，想抢的人单独一行 ${p}[抢红包]#编号。每人每个红包只能抢一次，不是每个人都会抢，发红包的人也可以抢。抢完可以晒手气或吐槽抢得少。`);
+    } else {
+      r.push(`- 转账：单独一行 ${p}[转账]金额 备注，转给${to}。很少用，只在剧情需要时（请客、还钱、表达心意）。`);
+    }
+    if (canAccept) r.push(`- 有人转账给你、状态是待收款时，决定收不收：单独一行 ${p}[收款]#编号 或 ${p}[退还]#编号。`);
     return r.join('\n');
   },
 
@@ -39,7 +55,7 @@ const Wallet = {
   async send(convId) {
     const { i } = ChatUI.ctx(convId);
     let to = i.charId;
-       if (i.type === 'g' || i.type === 'r') {
+    if (i.type === 'g' || i.type === 'r') {
       const ms = Conv.members(convId);
       to = await actionSheet(ms.map(c => ({ label: '转给 ' + c.name, value: c.id })));
     }
@@ -68,8 +84,9 @@ const Wallet = {
     await addMsg(convId, 'user', v.note || '转账', 'transfer', { ...v, to, status: 'pending' });
   },
 
-  // 点击转账卡片。返回 true 表示已处理，不再弹出普通菜单
+  // 点击转账 / 红包卡片。返回 true 表示已处理，不再弹出普通菜单
   async tap(m) {
+    if (m.type === 'redpacket') return this.rpTap(m);
     if (m.type !== 'transfer' || m.status !== 'pending') return false;
     if (m.to !== 'user') { toast('等待对方收款'); return true; }
     const a = await actionSheet([{ label: '收款 ' + this.fmt(m.amount), value: 'ok' }, { label: '退还', value: 'back' }]);
@@ -83,19 +100,35 @@ const Wallet = {
     return true;
   },
 
-  // 处理 AI 输出的 [转账] [收款] [退还]
+  // 处理 AI 输出的 [转账] [收款] [退还] [红包] [抢红包]
   async prepare(it, convId) {
-    const i = Conv.parse(convId);
-    const pid = i.type === 'g' ? i.group?.personaId : i.pid;
+    const i = Conv.parse(convId), pid = i.pid;
+    const multi = i.type === 'g' || i.type === 'r';
+    if (it.type === 'redpacket') return multi ? this.rpCreate(it, convId) : null;
+    if (it.type === 'grab') return multi ? this.rpGrabByAI(it, convId, pid) : null;
+
     if (it.type === 'transfer') {
-      const num = it.content.match(/\d+(\.\d+)?/);
+      let s = it.content.trim(), to = 'user';
+      // 群聊：内容开头是收款人名字
+      if (multi) {
+        const head = s.match(/^@?([^\d\s¥￥]+?)\s*[:：]?\s*(?=[¥￥]?\d)/);
+        if (head) {
+          const ms = Conv.members(convId).filter(c => c.id !== it.sender);
+          const n = Prompt.matchName([persona(pid).name, ...ms.map(c => c.name)], head[1]);
+          if (n && n !== persona(pid).name) to = ms.find(c => c.name === n).id;
+          s = s.slice(head[0].length);
+        }
+      }
+      const num = s.match(/\d+(\.\d+)?/);
       const amount = num ? Math.round(parseFloat(num[0]) * 100) / 100 : 0;
       if (!(amount > 0)) return null;
-      const note = it.content.slice(num.index + num[0].length).replace(/^\s*(元|块)?\s*/, '').trim();
-      const extra = { amount, note, to: 'user', status: 'pending' };
+      const note = s.slice(num.index + num[0].length).replace(/^\s*(元|块)?\s*/, '').trim();
+      const extra = { amount, note, to, status: 'pending' };
       if (i.type === 'cc') Object.assign(extra, { to: it.sender === i.a ? i.b : i.a, status: 'accepted' });
       return { sender: it.sender, type: 'transfer', content: note || '转账', extra };
     }
+
+    if (it.type !== 'accept' && it.type !== 'refund') return null;
     // 收款 / 退还：找最近一笔转给这个角色、还没处理的
     const code = it.content.replace(/[#＃\s]/g, '').slice(0, 4);
     const list = (await getMsgs(convId)).reverse();
@@ -104,9 +137,122 @@ const Wallet = {
     if (!t) return null;
     t.status = it.type === 'accept' ? 'accepted' : 'returned';
     await DB.put('msgs', t);
-    const name = charById(it.sender)?.name || '?';
-    if (t.status === 'returned') await this.log(t.amount, `${name} 退还了转账`);
-    return { sender: it.sender, type: 'sys', content: `${name} ${t.status === 'accepted' ? '收下了' : '退还了'} ${persona(pid).name} 的转账 ${this.fmt(t.amount)}` };
+    const name = this.who(it.sender, pid), from = this.who(t.sender, pid);
+    // 只有你发出的转账被退还，钱才回到你的钱包
+    if (t.status === 'returned' && t.sender === 'user') await this.log(t.amount, `${name} 退还了转账`);
+    return { sender: it.sender, type: 'sys', content: `${name} ${t.status === 'accepted' ? '收下了' : '退还了'} ${from} 的转账 ${this.fmt(t.amount)}` };
+  },
+
+  // ===== 红包 =====
+  rpLeft(m) {
+    const got = (m.grabs || []).reduce((s, g) => s + g.amt, 0);
+    return { n: m.count - (m.grabs || []).length, amt: Math.round((m.amount - got) * 100) / 100 };
+  },
+
+  // 二倍均值法：每次随机取 0.01 ~ 剩余平均值的两倍，最后一个拿走剩下的
+  rpCut(amt, n) {
+    if (n <= 1) return amt;
+    const max = Math.min(amt - 0.01 * (n - 1), amt / n * 2);
+    return Math.max(0.01, Math.floor(Math.random() * max * 100) / 100);
+  },
+
+  async rpGrab(m, who, pid) {
+    m.grabs ??= [];
+    const left = this.rpLeft(m);
+    if (left.n <= 0 || m.grabs.some(g => g.id === who)) return 0;
+    const amt = this.rpCut(left.amt, left.n);
+    m.grabs.push({ id: who, amt, ts: Date.now() });
+    if (left.n === 1) m.status = 'done';
+    await DB.put('msgs', m);
+    if (who === 'user') await this.log(amt, `领取 ${this.who(m.sender, pid)} 的红包`);
+    return amt;
+  },
+
+  rpText(m, pid) {
+    const left = this.rpLeft(m);
+    const got = (m.grabs || []).map(g => `${this.who(g.id, pid)}${this.fmt(g.amt)}`).join('、');
+    return `[红包#${m.id.slice(-4)}：${senderName(m, pid)}发的红包「${m.note || '恭喜发财'}」，共${this.fmt(m.amount)}，${m.count}个，${left.n > 0 ? `还剩${left.n}个` : '已领完'}${got ? '，已领：' + got : ''}]`;
+  },
+
+  rpDone(m, pid) {
+    return this.rpLeft(m).n > 0 ? '' : `，${this.who(m.sender, pid)}的红包已被领完`;
+  },
+
+  // 角色发红包。钱是角色自己的，不动你的钱包
+  rpCreate(it, convId) {
+    const mt = it.content.match(/^\s*[¥￥]?(\d+(?:\.\d+)?)\s*(?:元|块)?\s*(?:(\d+)\s*个?)?\s*(.*)$/);
+    if (!mt) return null;
+    const amount = Math.round(parseFloat(mt[1]) * 100) / 100;
+    if (!(amount > 0)) return null;
+    const def = Math.min(5, Conv.members(convId).length + 1);
+    const count = Math.max(1, Math.min(parseInt(mt[2], 10) || def, 100, Math.floor(amount * 100)));
+    const note = mt[3].trim().slice(0, 30);
+    return { sender: it.sender, type: 'redpacket', content: note || '恭喜发财', extra: { amount, count, note, grabs: [], status: 'open' } };
+  },
+
+  async rpGrabByAI(it, convId, pid) {
+    const code = it.content.replace(/[#＃\s]/g, '').slice(0, 4);
+    const list = (await getMsgs(convId)).reverse();
+    const ok = x => x.type === 'redpacket' && this.rpLeft(x).n > 0 && !(x.grabs || []).some(g => g.id === it.sender);
+    const m = (code && list.find(x => ok(x) && x.id.endsWith(code))) || list.find(ok);
+    if (!m) return null;
+    const amt = await this.rpGrab(m, it.sender, pid);
+    if (!amt) return null;
+    return { sender: it.sender, type: 'sys', content: `${this.who(it.sender, pid)} 领取了 ${this.who(m.sender, pid)} 的红包 ${this.fmt(amt)}${this.rpDone(m, pid)}` };
+  },
+
+  // 你发红包（群聊 / 共读）
+  async sendRP(convId) {
+    const n = Conv.members(convId).length + 1;
+    const v = await new Promise(res => {
+      const { el, close } = modal(`<h3>发红包</h3>
+        <label class="field"><span>总金额（余额 ${this.fmt(S.settings.wallet.balance)}）</span>
+          <input id="ra" type="number" inputmode="decimal" step="0.01" min="0.01"></label>
+        <label class="field"><span>红包个数（群里共 ${n} 人）</span><input id="rc" type="number" inputmode="numeric" min="1" value="${Math.min(5, n)}"></label>
+        <label class="field"><span>祝福语</span><input id="rn" maxlength="30" placeholder="恭喜发财，大吉大利"></label>
+        <div class="flex" style="justify-content:flex-end;gap:6px;margin-top:10px">
+          <button class="btn ghost" data-a="no">取消</button><button class="btn" data-a="ok">塞钱进红包</button></div>`);
+      el.onclick = e => {
+        const a = e.target.dataset.a;
+        if (a === 'no') { close(); res(null); }
+        if (a === 'ok') {
+          const amount = Math.round(Number($('#ra', el).value) * 100) / 100;
+          const count = parseInt($('#rc', el).value, 10);
+          if (!(amount > 0)) return toast('金额不对');
+          if (!(count >= 1) || count > 100) return toast('个数要在 1 到 100 之间');
+          if (amount < count * 0.01) return toast('每个红包至少 0.01 元');
+          if (amount > Number(S.settings.wallet.balance)) return toast('余额不足');
+          close();
+          res({ amount, count, note: $('#rn', el).value.trim() });
+        }
+      };
+    });
+    if (!v) return;
+    await this.log(-v.amount, '发红包');
+    await addMsg(convId, 'user', v.note || '恭喜发财', 'redpacket', { ...v, grabs: [], status: 'open' });
+  },
+
+  // 点红包：没领过就领，领过或领完了就看详情
+  async rpTap(m) {
+    const cur = (await DB.get('msgs', m.id)) || m; // 列表里的可能是旧数据，重新读一次
+    const pid = ChatUI.ctx(cur.convId).pid;
+    const mine = (cur.grabs || []).find(g => g.id === 'user');
+    if (!mine && this.rpLeft(cur).n > 0) {
+      const amt = await this.rpGrab(cur, 'user', pid);
+      if (amt) {
+        toast(`抢到 ${this.fmt(amt)}`);
+        await addMsg(cur.convId, 'user', `${persona(pid).name} 领取了 ${this.who(cur.sender, pid)} 的红包 ${this.fmt(amt)}${this.rpDone(cur, pid)}`, 'sys');
+      }
+      return true;
+    }
+    const gs = cur.grabs || [];
+    const best = this.rpLeft(cur).n <= 0 && gs.length > 1 ? gs.reduce((a, b) => b.amt > a.amt ? b : a) : null;
+    const { el, close } = modal(`<h3>🧧 ${esc(this.who(cur.sender, pid))}的红包</h3>
+      <p class="empty" style="padding:4px 0">${esc(cur.note || '恭喜发财')} · ${cur.count} 个共 ${this.fmt(cur.amount)}，已领 ${gs.length} 个</p>
+      ${gs.map(g => `<div class="row" style="cursor:default"><span class="grow">${esc(this.who(g.id, pid))}${g === best ? ' 👑手气最佳' : ''}</span><b>${this.fmt(g.amt)}</b></div>`).join('') || '<p class="empty">还没人领</p>'}
+      <button class="btn ghost" style="margin-top:8px">关闭</button>`);
+    el.onclick = e => { if (e.target.closest('button')) close(); };
+    return true;
   },
 };
 

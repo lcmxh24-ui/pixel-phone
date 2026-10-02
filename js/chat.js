@@ -43,7 +43,7 @@ const Gen = {
     this.busy.add(convId);
     if (!at) this.typing(convId, true);
     try { return await fn(); }
-    catch (e) { console.error(e); toast('生成失败：' + e.message, 4000); return null; }
+        catch (e) { console.error(e); Log.add('生成失败', e.message); return null; }
     finally {
       this.busy.delete(convId);
       this.typing(convId, false);
@@ -51,13 +51,21 @@ const Gen = {
     }
   },
 
-  dm(convId, { hint = '', at = null, proactive = false } = {}) {
+    dm(convId, { hint = '', at = null, proactive = false } = {}) {
     return this.run(convId, at, async () => {
       const { pid, charId } = Conv.parse(convId);
       const ch = charById(charId);
       if (!ch) return null;
-      const { system, messages } = await Prompt.buildDM(ch, convId, { hint, at });
+      // 角色拉黑了你：不会主动找你；你发消息时，TA 看完决定要不要解除
+      const blocked = getRel(pid, ch.id).theyBlock;
+      if (blocked && proactive) return null;
+      const { system, messages } = await Prompt.buildDM(ch, convId, { hint: blocked ? Prompt.blockedHint() : hint, at });
       const r = Prompt.parseDM(await API.claude(system, messages), ch);
+      if (blocked) {
+        if (!r.unblock) return r;
+        await setRel(pid, ch.id, { theyBlock: false });
+        Log.add(`${ch.name} 解除了对你的拉黑`, '');
+      }
       if (r.skip) return r;
       if (r.ignore) {
         // 主动找人时不会"已读不回"
@@ -65,21 +73,35 @@ const Gen = {
       } else {
         await this.post(convId, r.msgs.map(m => ({ sender: ch.id, ...m })), { at });
       }
+      if (r.block) {
+        await setRel(pid, ch.id, { theyBlock: true });
+        Log.add(`${ch.name} 把你拉黑了`, '');
+      }
+      // 私聊里答应拉你进群
+      const gs = S.groups.filter(g => g.personaId === pid && g.userIn === false && g.members.includes(ch.id));
+      for (const raw of r.invites) {
+        const gname = Prompt.matchName(gs.map(g => g.name), raw);
+        const g = gs.find(x => x.name === gname);
+        if (!g) continue;
+        const t = await GroupAdmin.apply(Conv.g(g.id), ch.id, { k: '拉人', arg: persona(pid).name });
+        if (t) await addMsg(Conv.g(g.id), ch.id, t, 'sys');
+      }
       for (const it of r.intents) await Social.queueIntent(pid, ch.id, it.to, it.reason);
       return r;
     });
   },
 
-  group(gid, { at = null } = {}) {
+    group(gid, { at = null, hint = '' } = {}) {
     const convId = Conv.g(gid);
     return this.run(convId, at, async () => {
       const g = S.groups.find(x => x.id === gid);
       const members = (g?.members || []).map(charById).filter(Boolean);
       if (!members.length) throw new Error('群里还没有角色');
-      const { system, messages } = await Prompt.buildGroup(g, convId);
-            const r = Prompt.parseLines(await API.claude(system, messages, { maxTokens: 1500 }), members.map(c => c.name), { cmds: true });
+      // 把主动提示和补发时间传给提示词
+      const { system, messages } = await Prompt.buildGroup(g, convId, { hint, at });
+      const r = Prompt.parseLines(await API.claude(system, messages, { maxTokens: 1500 }), members.map(c => c.name), { cmds: true });
       const byName = n => members.find(c => c.name === n);
-            await this.post(convId, r.msgs.filter(m => byName(m.name)).map(m => ({ sender: byName(m.name).id, type: m.type, content: m.content, cmd: m.cmd, quote: m.quote })), { at });
+      await this.post(convId, r.msgs.filter(m => byName(m.name)).map(m => ({ sender: byName(m.name).id, type: m.type, content: m.content, cmd: m.cmd, quote: m.quote })), { at });
       for (const it of r.intents) {
         const f = byName(it.from);
         if (f) await Social.queueIntent(g.personaId, f.id, it.to, it.reason);
@@ -88,7 +110,7 @@ const Gen = {
     });
   },
 
-  cc(convId, { reason = '', from = null, at = null } = {}) {
+    cc(convId, { reason = '', from = null, at = null } = {}) {
     return this.run(convId, at, async () => {
       const i = Conv.parse(convId);
       let a = charById(i.a), b = charById(i.b);
@@ -98,6 +120,20 @@ const Gen = {
       const { system, messages } = await Prompt.buildCC(a, b, convId, { reason, at });
       const r = Prompt.parseLines(await API.claude(system, messages, { maxTokens: 1500 }), [a.name, b.name]);
       await this.post(convId, r.msgs.map(m => ({ sender: m.name === a.name ? a.id : b.id, type: m.type, content: m.content, quote: m.quote })), { at });
+      const byName = n => [a, b].find(c => c.name === n);
+      // 被朋友劝动了：解除对你的拉黑，然后主动来找你
+      for (const n of r.unblocks) {
+        const c = byName(n);
+        if (!c || !getRel(i.pid, c.id).theyBlock) continue;
+        await setRel(i.pid, c.id, { theyBlock: false });
+        Log.add(`${c.name} 解除了对你的拉黑`, '');
+        await Social.queueIntent(i.pid, c.id, persona(i.pid).name, '刚解除了对你的拉黑，想跟你说点什么');
+      }
+      // 聊完想去找别人（比如帮忙说情）
+      for (const it of r.intents) {
+        const f = byName(it.from);
+        if (f) await Social.queueIntent(i.pid, f.id, it.to, it.reason);
+      }
       return r;
     });
   },
@@ -161,7 +197,7 @@ const ChatUI = {
     const sec = Math.max(1, Math.ceil(m.content.length / 4));
     const body = m.type === 'voice'
       ? `<button class="voice" data-voice="${m.id}" aria-label="语音消息 ${sec} 秒">▶ ${'▮'.repeat(Math.min(8, Math.ceil(sec / 3)))} ${sec}"</button><div class="vtext">${esc(m.content)}</div>`
-      : m.type === 'transfer' ? Wallet.render(m, pid)
+           : m.type === 'transfer' || m.type === 'redpacket' ? Wallet.render(m, pid)
       : m.type === 'petinvite' ? Pet.renderInvite(m)
       : ['image', 'sticker'].includes(m.type) ? Media.render(m) : this.fmt(m.content, pid);
     // 译文：放在 body 整个表达式结束之后
@@ -211,13 +247,15 @@ Views.chat = async ({ convId }) => {
   const { i, pid } = ChatUI.ctx(convId);
   let title;
   if (i.type === 'dm') title = charById(i.charId)?.name;
-  else if (i.type === 'g') title = i.group && `${i.group.name}（${i.group.members.length + 1}）`;
+  else if (i.type === 'g') title = i.group && `${i.group.name}（${i.group.members.length + (i.group.userIn === false ? 0 : 1)}）`;
   else title = `${charById(i.a)?.name || '?'} & ${charById(i.b)?.name || '?'}`;
   if (!title) return Router.back();
 
-    const isG = i.type === 'g', isCC = i.type === 'cc';
-    // 单聊 / 群聊：我发的消息在对方看来是哪种语言
-  const langOpts = (i.type === 'dm' || isG) ? Lang.choices(convId, pid) : [];
+      const isG = i.type === 'g', isCC = i.type === 'cc';
+  const away = isG && i.group.userIn === false; // 你不在这个群里
+  const iBlock = i.type === 'dm' && getRel(pid, i.charId).iBlock; // 你拉黑了对方
+  // 单聊 / 群聊：我发的消息在对方看来是哪种语言
+  const langOpts = (i.type === 'dm' || (isG && !away)) ? Lang.choices(convId, pid) : [];
   let autoLang = S.settings.autoLang?.[convId] || '';
   if (autoLang === true) autoLang = langOpts[0] || ''; // 兼容上一版存的 true
   if (!langOpts.includes(autoLang)) autoLang = '';
@@ -226,8 +264,10 @@ Views.chat = async ({ convId }) => {
   const right = (langBtn || isG)
     ? `<span class="flex" style="gap:4px;flex-wrap:nowrap">${langBtn}${isG ? '<button class="btn ghost" data-act="gset" aria-label="群设置">⚙</button>' : ''}</span>` : '';
   const typingText = isCC ? '他们正在聊…' : isG ? '有人正在输入…' : '对方正在输入…';
-  const bottom = isCC
+    const bottom = isCC
     ? `<div class="peekbar"><span>👀 你在偷看，他们不知道</span><button class="btn" data-act="more">让他们继续聊</button></div>`
+    : away ? `<div class="peekbar"><span>${i.group.byChar ? '👀 你不在这个群，他们不知道你在看' : '你已退出群聊，只能看不能说'}</span><button class="btn" data-act="gmore">让他们继续聊</button></div>`
+    : iBlock ? `<div class="peekbar"><span>🚫 你拉黑了${esc(title)}，TA 的消息你还能看到</span><button class="btn" data-act="unblock">解除拉黑</button></div>`
        : `<div class="inputbar">
         <button class="btn ghost" data-act="media" aria-label="发图片、表情或转账">＋</button>
         ${isG ? '<button class="btn ghost" data-act="at" aria-label="艾特">@</button>' : ''}
@@ -281,6 +321,12 @@ Views.chat = async ({ convId }) => {
       return Router.render();
     }
     if (a === 'more') return Gen.cc(convId);
+    if (a === 'gmore') return Gen.group(i.gid);
+        if (a === 'unblock') {
+      await setBlock(pid, i.charId, false);
+      toast('已解除拉黑');
+      return Router.render();
+    }
     if (a === 'at') {
       const names = [...i.group.members.map(charById).filter(Boolean).map(c => c.name), '全体成员'];
       const n = await actionSheet(names.map(x => ({ label: '@' + x, value: x })));
@@ -412,41 +458,65 @@ Views.groupEdit = async ({ gid }) => {
   const g = S.groups.find(x => x.id === gid);
   if (!g) return Router.home();
   const GA = GroupAdmin, convId = Conv.g(gid), pid = g.personaId;
-  const me = GA.role(g, 'user'), who = id => GA.name(g, id);
+  const inG = g.userIn !== false;
+  const me = inG ? GA.role(g, 'user') : 'out', isOwner = me === 'owner', isBoss = me === 'owner' || me === 'admin';
+  const who = id => GA.name(g, id);
   const people = ['user', ...g.members];
+  const charOwner = GA.owner(g) !== 'user' && charById(GA.owner(g));
   screen().innerHTML = topbar('群设置') + `<div class="body">
+    ${inG ? '' : `<div class="card"><p class="empty">${g.byChar ? `这个群是 ${esc(who(GA.owner(g)))} 建的，你不在里面。` : '你已经退出了这个群。'}群主或管理员把你拉进来之后才能说话。</p></div>`}
+    <div class="card">
+      <div class="row"><span>群主</span><span>${esc(who(GA.owner(g)))}</span></div>
+      <div class="row"><span>管理员</span><span>${esc(GA.admins(g).map(who).join('、') || '无')}</span></div>
+      <div class="row"><span>成员</span><span>${esc(g.members.map(who).join('、') || '无')}</span></div>
+    </div>
+
+    <h3>修正（不发通知，群里的人不知道）</h3>
+    <p class="empty">AI 起的名字或头像不对劲时用。</p>
     <div class="card">
       <label class="field"><span>群名</span><input data-g="name" value="${esc(g.name)}"></label>
       <label class="field"><span>群头像链接</span><input data-g="avatar" value="${esc(g.avatar)}" autocapitalize="off"></label>
+      ${charOwner ? `<div class="flex" style="gap:6px;flex-wrap:wrap;margin-top:8px">
+        <button class="btn ghost" data-act="rename">让 ${esc(charOwner.name)} 重新起群名</button>
+        ${S.settings.image.url ? `<button class="btn ghost" data-act="reavatar">让 ${esc(charOwner.name)} 重新生成群头像</button>` : ''}
+      </div>` : ''}
     </div>
-    <h3>群主和管理员</h3>
-    <p class="empty">这里改的算"本来就是这样"，群里不会通知，角色会以为群一开始就是群主建的。</p>
+
+    ${isOwner ? `<h3>初始设定（你是群主才能改，不发通知）</h3>
     <div class="card">
       <label class="field"><span>群主</span><select id="g-owner">${people.map(id =>
         `<option value="${id}" ${GA.owner(g) === id ? 'selected' : ''}>${esc(who(id))}</option>`).join('')}</select></label>
-            ${people.filter(id => id !== GA.owner(g)).map(id => `<label class="row"><span>${esc(who(id))} 是管理员</span>
+      ${people.filter(id => id !== GA.owner(g)).map(id => `<label class="row"><span>${esc(who(id))} 是管理员</span>
         <input type="checkbox" data-adm="${id}" ${GA.admins(g).includes(id) ? 'checked' : ''}></label>`).join('')}
-      ${GA.owner(g) !== 'user' ? `<button class="btn ghost" data-act="rename" style="margin-top:8px">让 ${esc(who(GA.owner(g)))} 重新起群名（不通知）</button>` : ''}
     </div>
-    ${me !== 'member' ? `<h3>在群里操作（会发通知）</h3><div class="card flex" style="gap:6px;flex-wrap:wrap">
+    <h3>成员（不发通知）</h3><div class="card">${memberChecks(g.members, pid)}</div>` : ''}
+
+    ${isBoss ? `<h3>群管理（会发通知）</h3><div class="card flex" style="gap:6px;flex-wrap:wrap">
+      <button class="btn ghost" data-act="gname">改群名</button>
+      <button class="btn ghost" data-act="gav">换群头像</button>
       <button class="btn ghost" data-act="invite">拉人进群</button>
       <button class="btn ghost" data-act="kick">踢人</button>
-      ${me === 'owner' ? '<button class="btn ghost" data-act="setadm">设 / 撤管理员</button><button class="btn ghost" data-act="transfer">转让群主</button>' : ''}
+      ${isOwner ? '<button class="btn ghost" data-act="setadm">设 / 撤管理员</button><button class="btn ghost" data-act="transfer">转让群主</button>' : ''}
     </div>` : ''}
-    <h3>成员（直接编辑，不发通知）</h3><div class="card">${memberChecks(g.members, pid)}</div>
-    <button class="btn danger" data-act="del">解散群聊</button></div>`;
+
+    <div class="card flex" style="gap:8px;flex-wrap:wrap">
+      ${inG ? '<button class="btn ghost" data-act="leave">退出群聊</button>' : ''}
+      ${isOwner ? '<button class="btn danger" data-act="del">解散群聊</button>' : ''}
+      ${inG ? '' : '<button class="btn danger" data-act="del">从手机里删掉这个群</button>'}
+    </div>
+  </div>`;
 
   const save = () => DB.put('groups', g);
   $$('[data-g]').forEach(el => el.onchange = () => { g[el.dataset.g] = el.value.trim(); save(); });
   $$('[data-mem]').forEach(el => el.onchange = async () => {
     g.members = checkedMembers();
-    // 不在群里的人不能再当群主或管理员
     g.admins = GA.admins(g).filter(x => x === 'user' || g.members.includes(x));
     if (GA.owner(g) !== 'user' && !g.members.includes(g.owner)) g.owner = 'user';
     await save();
     Router.render();
   });
-  $('#g-owner').onchange = async e => {
+  const os = $('#g-owner');
+  if (os) os.onchange = async e => {
     g.owner = e.target.value;
     g.admins = GA.admins(g).filter(x => x !== g.owner);
     await save();
@@ -457,7 +527,12 @@ Views.groupEdit = async ({ gid }) => {
     await save();
   });
 
-  // 选一个人，执行群操作，并在群里发通知
+  // 群里发了通知后，让大家有反应
+  const notify = async t => {
+    await addMsg(convId, 'user', t, 'sys');
+    Router.render();
+    Gen.group(gid);
+  };
   const doAct = async (k, ids) => {
     if (!ids.length) return toast('没有可选的人');
     const id = await actionSheet(ids.map(x => ({ label: who(x), value: x })));
@@ -476,6 +551,26 @@ Views.groupEdit = async ({ gid }) => {
       else toast('起名失败，详情见「记忆体检」');
       return;
     }
+    if (a === 'reavatar') {
+      toast('生成中，可能要等十几秒…', 4000);
+      if (await GA.autoAvatar(g)) { toast('已换头像'); Router.render(); }
+      else toast('生成失败，详情见「记忆体检」');
+      return;
+    }
+    if (a === 'gname') {
+      const n = (await editText('新群名', g.name, false))?.trim();
+      if (!n) return;
+      const t = await GA.apply(convId, 'user', { k: '改群名', arg: n });
+      return t ? notify(t) : toast('不能这样操作');
+    }
+    if (a === 'gav') {
+      const u = (await editText('新群头像链接', '', false))?.trim();
+      if (!u) return;
+      if (!safeUrl(u)) return toast('链接要以 http 开头');
+      g.avatar = u;
+      await save();
+      return notify(`${who('user')} 更换了群头像`);
+    }
     if (a === 'invite') return doAct('拉人', GA.invitable(g, 'user').map(c => c.id));
     if (a === 'kick') return doAct('踢人', g.members.filter(id => me === 'owner' || GA.role(g, id) === 'member'));
     if (a === 'transfer') return doAct('转让群主', g.members);
@@ -486,8 +581,14 @@ Views.groupEdit = async ({ gid }) => {
       if (t) { await addMsg(convId, 'user', t, 'sys'); Router.render(); }
       return;
     }
+    if (a === 'leave') {
+      if (!g.members.length) return toast('群里只剩你了，直接解散吧');
+      if (!await confirmBox(`退出「${g.name}」${isOwner ? '（群主会自动转给别人）' : ''}`)) return;
+      await GA.leave(g);
+      return Router.render();
+    }
     if (a !== 'del') return;
-    if (!await confirmBox(`解散「${g.name}」（聊天记录一起删除）`)) return;
+    if (!await confirmBox(`${inG ? '解散' : '删掉'}「${g.name}」（聊天记录一起删除）`)) return;
     for (const m of await getMsgs(convId)) await DB.del('msgs', m.id);
     await DB.del('groups', gid);
     S.groups = S.groups.filter(x => x.id !== gid);
@@ -518,16 +619,18 @@ const GroupAdmin = {
   async apply(convId, actor, { k, arg }) {
     const g = Conv.parse(convId).group;
     if (!g || !arg) return null;
+    if (actor === 'user' && g.userIn === false) return null;
     const r = this.role(g, actor), boss = r !== 'member', who = this.name(g, actor);
     const t = this.idByName(g, arg), tn = t ? this.name(g, t) : '';
     let text = null;
     switch (k) {
       case '改群名':
+        if (!boss) return null;
         g.name = arg.slice(0, 30);
         text = `${who} 修改群名为「${g.name}」`;
         break;
       case '换群头像': {
-        if (!S.settings.image.url) return null;
+                if (!boss || !S.settings.image.url) return null;
         try {
           const { style, desc } = Media.parseStyle(arg);
           const url = await Media.genImage(await Media.makePrompt(desc, style, charById(actor)));
@@ -537,9 +640,16 @@ const GroupAdmin = {
         text = `${who} 更换了群头像`;
         break;
       }
-      case '拉人':
-        if (!boss || !t || t === 'user' || !this.invitable(g, actor).some(c => c.id === t)) return null;
-        g.members.push(t);
+            case '拉人':
+        if (!boss || !t) return null;
+        if (t === 'user') {
+          // 把你拉回群：你得不在群里，对方认识你，而且没拉黑你
+          if (g.userIn !== false || !knows(g.personaId, actor) || getRel(g.personaId, actor).theyBlock) return null;
+          g.userIn = true;
+        } else {
+          if (!this.invitable(g, actor).some(c => c.id === t)) return null;
+          g.members.push(t);
+        }
         text = `${who} 邀请 ${tn} 加入了群聊`;
         break;
       case '踢人':
@@ -573,24 +683,30 @@ const GroupAdmin = {
   },
 
   // 写进群聊提示词的群信息和操作格式
-  rules(g, members) {
+    rules(g, members) {
     const o = this.owner(g), on = this.name(g, o), pname = persona(g.personaId).name;
     const adm = this.admins(g).map(id => this.name(g, id));
     const out = [`【群信息】群主是${on}（这个群就是${on}建的）${adm.length ? '，管理员：' + adm.join('、') : '，没有管理员'}。`];
-    out.push(`- 改群名（任何人都可以，很少用）：单独一行 名字：[改群名]新群名`);
-    if (S.settings.image.url) out.push(`- 换群头像（任何人都可以，很少用）：单独一行 名字：[换群头像]画面描述`);
     const bosses = members.filter(c => this.role(g, c.id) !== 'member');
-    if (bosses.length) {
-      out.push(`- 群管理（只有群主和管理员能用，单独一行，符合性格和剧情时才用，很少用）：名字：[拉人]对方名字 / 名字：[踢人]对方名字。管理员不能踢群主和其他管理员，谁都不能踢${pname}。`);
-      for (const c of bosses) {
-        const inv = this.invitable(g, c.id).map(x => x.name);
-        if (inv.length) out.push(`  ${c.name}可以拉进群的人：${inv.join('、')}`);
-      }
-      const oc = members.find(c => c.id === o);
-      if (oc) out.push(`- 群主${oc.name}还可以：名字：[设管理]名字 / 名字：[撤管理]名字 / 名字：[转让群主]名字`);
+    if (!bosses.length) return out.join('\n');
+    const bn = bosses.map(c => c.name).join('、');
+    out.push(`- 下面的群操作只有${bn}能用，每条单独一行，符合性格和剧情时才用。普通成员不能改群名和头像，只能在群里吐槽。`);
+    out.push(`- 改群名：名字：[改群名]新群名`);
+    if (S.settings.image.url) out.push(`- 换群头像：名字：[换群头像]画面描述`);
+    out.push(`- 有人改了群名或头像时（聊天记录里会有系统提示），${bn}可以改回去，也可以顺着气氛接着整活改。没人动的时候很少主动改。`);
+    out.push(`- 拉人 / 踢人：名字：[拉人]对方名字 / 名字：[踢人]对方名字。管理员不能踢群主和其他管理员，谁都不能踢${pname}。`);
+    const away = g.userIn === false;
+    for (const c of bosses) {
+      const inv = this.invitable(g, c.id).map(x => x.name);
+      if (away && knows(g.personaId, c.id) && !getRel(g.personaId, c.id).theyBlock) inv.unshift(pname);
+      if (inv.length) out.push(`  ${c.name}可以拉进群的人：${inv.join('、')}`);
     }
+    if (away) out.push(`- ${pname}现在不在群里。群主或管理员可以用 [拉人]${pname} 把${pname}拉进来，要符合剧情。`);
+    const oc = members.find(c => c.id === o);
+    if (oc) out.push(`- 群主${oc.name}还可以：名字：[设管理]名字 / 名字：[撤管理]名字 / 名字：[转让群主]名字`);
     return out.join('\n');
   },
+
   // 让群主按自己的性格给群起名，可选顺便生成头像。静默修改，不发通知
   async autoName(g, withAvatar = false) {
     const o = charById(this.owner(g));
@@ -625,6 +741,76 @@ const GroupAdmin = {
     }
     await DB.put('groups', g);
     return !!name;
+  },
+  // 让群主按自己的审美重新生成群头像。静默修改，不发通知
+  async autoAvatar(g) {
+    const o = charById(this.owner(g));
+    if (!o || !S.settings.claude.key || !S.settings.image.url) return false;
+    const system = `你在扮演${o.name}，要给自己当群主的群「${g.name}」换一个群头像。
+【${o.name}的设定】
+${o.persona || '（无）'}
+【群成员】${g.members.map(id => charById(id)?.name).filter(Boolean).join('、')}
+只输出一行：[图片]类型|画面描述。要符合${o.name}的审美和这个群的气氛。`;
+    try {
+      const out = await API.claude(system, [{ role: 'user', content: '换头像吧。' }], { maxTokens: 200 });
+      const line = out.split('\n').map(s => s.trim()).find(l => /^\[图片\]/.test(l)) || out.trim();
+      const { style, desc } = Media.parseStyle(line.replace(/^\[图片\]\s*/, ''));
+      const url = await Media.genImage(await Media.makePrompt(desc, style, o));
+      if (!url) return false;
+      g.avatar = url;
+      await DB.put('groups', g);
+      return true;
+    } catch (e) {
+      Log.add('群头像生成失败', e.message);
+      return false;
+    }
+  },
+
+  // 你退出群聊。你是群主时自动转给管理员，没有管理员就转给第一个成员
+  async leave(g) {
+    if (this.owner(g) === 'user') g.owner = this.admins(g).find(id => id !== 'user' && g.members.includes(id)) || g.members[0];
+    g.admins = this.admins(g).filter(id => id !== 'user');
+    g.userIn = false;
+    await DB.put('groups', g);
+    await addMsg(Conv.g(g.id), 'user', `${persona(g.personaId).name} 退出了群聊`, 'sys');
+  },
+
+  // 角色自己建群（没有你）。每个人设最多 3 个，至少拉两个人
+  async charCreate(pid, at = null) {
+    if (S.groups.filter(g => g.personaId === pid && g.byChar).length >= 3) return null;
+    const knownOf = c => S.chars.filter(o => o.id !== c.id && knows(c.id, o.id));
+    const cands = S.chars.filter(c => c.proactive !== false && knownOf(c).length >= 2);
+    if (!cands.length) return null;
+    const o = pick(cands), known = knownOf(o);
+    const mine = S.groups.filter(g => g.personaId === pid && g.members.includes(o.id))
+      .map(g => `${g.name}（${g.members.map(id => charById(id)?.name).filter(Boolean).join('、')}）`);
+    const system = [
+      `你在扮演${o.name}，判断${o.name}此刻会不会建一个手机群聊。`,
+      `【${o.name}的设定】\n${o.persona || '（无）'}`,
+      `【${o.name}认识的人】\n${known.map(c => `${c.name}（${getRel(o.id, c.id).desc || '认识'}）`).join('\n')}`,
+      mine.length && `【${o.name}已经在的群】\n${mine.join('\n')}`,
+      `【要求】
+- 真人建群需要理由：一起做某件事、组织活动、几个朋友的小圈子、吐槽某人等。没有理由就别建，已经有差不多的群也别建。
+- 群名用${o.name}的母语${Lang.of(o)}写，符合性格，不超过 15 个字。
+- 只能拉上面认识的人，至少 2 个。不要拉${persona(pid).name}。
+- 只输出 JSON：{"name":"群名","members":["名字"],"reason":"建群原因"}。不建就只输出 [不建]`,
+    ].filter(Boolean).join('\n\n');
+    let out;
+    try { out = await API.claude(system, [{ role: 'user', content: `现在是${nowText(at || Date.now())}。` }], { maxTokens: 300 }); }
+    catch (e) { Log.add('角色建群失败', e.message); return null; }
+    if (/\[不建\]/.test(out)) return null;
+    let obj;
+    try { obj = Memory.parseJSON(out); } catch (e) { Log.add('角色建群失败', e.message); return null; }
+    const names = known.map(c => c.name);
+    const ids = [...new Set((obj.members || []).map(n => Prompt.matchName(names, n)).filter(Boolean))]
+      .map(n => known.find(c => c.name === n).id);
+    if (ids.length < 2) return null;
+    const name = String(obj.name || '').trim().slice(0, 30) || '群聊';
+    const g = { id: uid(), name, avatar: '', members: [o.id, ...ids], personaId: pid, owner: o.id, admins: [], byChar: true, userIn: false, created: at || Date.now() };
+    await DB.put('groups', g);
+    S.groups.push(g);
+    await addMsg(Conv.g(g.id), o.id, `${o.name} 创建了群聊「${name}」`, 'sys', at ? { ts: at } : {});
+    return { g, owner: o, reason: String(obj.reason || '') };
   },
 };
 
