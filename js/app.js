@@ -542,30 +542,126 @@ Views.mems = async ({ charId }) => {
 };
 
 // ===== 关系网 =====
+// 搜索词和筛选在页面重绘后保留
+const RelUI = { q: '', show: 'all' };
+
+// 批量写关系，只存一次数据库
+async function setRels(pairs, patch) {
+  for (const [a, b] of pairs) S.rels[relKey(a, b)] = { ...getRel(a, b), ...patch };
+  await DB.put('kv', { id: 'rels', value: S.rels });
+}
+
 Views.rels = async () => {
   const pid = activePid(), p = persona(pid);
-  const row = (a, b, title) => {
+  const row = (a, b, title, names) => {
     const r = getRel(a, b);
-    return `<div class="card rel" data-a="${a}" data-b="${b}">
-      <label class="row"><span>${title}</span><input type="checkbox" data-know ${r.know ? 'checked' : ''}> 认识</label>
+    return `<div class="card rel" data-a="${a}" data-b="${b}" data-names="${esc(names.join(' ').toLowerCase())}">
+      <label class="row"><input type="checkbox" data-sel aria-label="选中 ${esc(title)}">
+        <span class="grow">${esc(title)}</span><input type="checkbox" data-know ${r.know ? 'checked' : ''} aria-label="认识"> 认识</label>
       <input data-desc value="${esc(r.desc)}" placeholder="关系描述，比如：大学室友，关系一般" ${r.know ? '' : 'disabled'}>
     </div>`;
   };
   const pairs = [];
   for (let i = 0; i < S.chars.length; i++) for (let j = i + 1; j < S.chars.length; j++) pairs.push([S.chars[i], S.chars[j]]);
+
   screen().innerHTML = topbar('关系网') + `<div class="body">
-    <h3>${esc(p.name)} 和角色</h3>
-    <p class="empty">只对当前人设生效。不认识的角色不会出现在聊天列表，也不会主动找你。</p>
-    ${S.chars.map(c => row(pid, c.id, `${p.name} ↔ ${c.name}`)).join('') || '<p class="empty">还没有角色</p>'}
-    <h3>角色之间</h3>
-    <p class="empty">所有人设共用。只有认识的两个人才会私聊。</p>
-    ${pairs.map(([a, b]) => row(a.id, b.id, `${a.name} ↔ ${b.name}`)).join('') || '<p class="empty">至少要两个角色</p>'}
+    <div class="card rel-tools">
+      <input id="rel-q" type="search" value="${esc(RelUI.q)}" placeholder="搜索名字，空格分隔可搜两个人" aria-label="搜索名字">
+      <div class="flex" style="margin-top:6px">
+        <select id="rel-show" aria-label="筛选" style="width:auto;flex:1">
+          <option value="all" ${RelUI.show === 'all' ? 'selected' : ''}>全部</option>
+          <option value="yes" ${RelUI.show === 'yes' ? 'selected' : ''}>只看认识</option>
+          <option value="no" ${RelUI.show === 'no' ? 'selected' : ''}>只看不认识</option>
+        </select>
+        <button class="btn ghost sm" data-act="all">全选结果</button>
+        <button class="btn ghost sm" data-act="none">清除选择</button>
+      </div>
+      <div class="flex" id="rel-batch" style="margin-top:6px" hidden>
+        <small id="rel-n" class="grow"></small>
+        <button class="btn green sm" data-act="know">设为认识</button>
+        <button class="btn ghost sm" data-act="unknow">设为不认识</button>
+        <button class="btn ghost sm" data-act="desc">改描述</button>
+      </div>
+    </div>
+    <div data-sec>
+      <h3>${esc(p.name)} 和角色</h3>
+      <p class="empty">只对当前人设生效。不认识的角色不会出现在聊天列表，也不会主动找你。</p>
+      ${S.chars.map(c => row(pid, c.id, `${p.name} ↔ ${c.name}`, [p.name, c.name])).join('') || '<p class="empty">还没有角色</p>'}
+    </div>
+    <div data-sec>
+      <h3>角色之间</h3>
+      <p class="empty">所有人设共用。只有认识的两个人才会私聊。</p>
+      ${pairs.map(([a, b]) => row(a.id, b.id, `${a.name} ↔ ${b.name}`, [a.name, b.name])).join('') || '<p class="empty">至少要两个角色</p>'}
+    </div>
+    <p class="empty" id="rel-none" hidden>没有符合条件的关系</p>
   </div>`;
-  $$('.rel').forEach(card => {
+
+  const cards = $$('.rel');
+  const visible = () => cards.filter(c => !c.hidden);
+  const selected = () => visible().filter(c => $('[data-sel]', c).checked);
+
+  const syncBatch = () => {
+    const n = selected().length;
+    $('#rel-batch').hidden = !n;
+    $('#rel-n').textContent = `已选 ${n} 项`;
+  };
+
+  // 按搜索词和筛选显示卡片，被隐藏的取消勾选，免得批量操作改到看不见的
+  const filter = () => {
+    const terms = RelUI.q.toLowerCase().split(/\s+/).filter(Boolean);
+    for (const c of cards) {
+      const know = $('[data-know]', c).checked;
+      const ok = terms.every(t => c.dataset.names.includes(t))
+        && (RelUI.show === 'all' || (RelUI.show === 'yes') === know);
+      c.hidden = !ok;
+      if (!ok) $('[data-sel]', c).checked = false;
+    }
+    $$('[data-sec]').forEach(s => { s.hidden = !!$$('.rel', s).length && !$$('.rel', s).some(c => !c.hidden); });
+    $('#rel-none').hidden = !cards.length || visible().length > 0;
+    syncBatch();
+  };
+
+  // 把关系数据同步回卡片
+  const syncCard = c => {
+    const r = getRel(c.dataset.a, c.dataset.b), d = $('[data-desc]', c);
+    $('[data-know]', c).checked = r.know;
+    d.value = r.desc;
+    d.disabled = !r.know;
+  };
+
+  $('#rel-q').oninput = e => { RelUI.q = e.target.value; filter(); };
+  $('#rel-show').onchange = e => { RelUI.show = e.target.value; filter(); };
+
+  cards.forEach(card => {
     const { a, b } = card.dataset, desc = $('[data-desc]', card);
+    $('[data-sel]', card).onchange = syncBatch;
     $('[data-know]', card).onchange = async e => { await setRel(a, b, { know: e.target.checked }); desc.disabled = !e.target.checked; };
     desc.onchange = async () => setRel(a, b, { desc: desc.value.trim() });
   });
+
+  screen().onclick = async e => {
+    const act = e.target.closest('[data-act]')?.dataset.act;
+    if (act === 'all') { visible().forEach(c => { $('[data-sel]', c).checked = true; }); return syncBatch(); }
+    if (act === 'none') { cards.forEach(c => { $('[data-sel]', c).checked = false; }); return syncBatch(); }
+    if (!['know', 'unknow', 'desc'].includes(act)) return;
+    const sel = selected();
+    if (!sel.length) return;
+    const ids = sel.map(c => [c.dataset.a, c.dataset.b]);
+    let patch;
+    if (act === 'know') patch = { know: true };
+    if (act === 'unknow') patch = { know: false };
+    if (act === 'desc') {
+      const t = await editText(`给 ${sel.length} 项设置关系描述（留空 = 清空）`, '', false);
+      if (t === null) return;
+      patch = { desc: t.trim() };
+    }
+    await setRels(ids, patch);
+    sel.forEach(syncCard);
+    toast(`已修改 ${sel.length} 项`);
+    filter(); // 筛选「只看认识/不认识」时，改完的会被移出结果
+  };
+
+  filter();
 };
 
 // ===== 我：人设管理 + 共用钱包 =====
