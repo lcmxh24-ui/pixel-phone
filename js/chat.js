@@ -73,7 +73,7 @@ const Gen = {
       const { system, messages } = await Prompt.buildGroup(g, convId);
             const r = Prompt.parseLines(await API.claude(system, messages, { maxTokens: 1500 }), members.map(c => c.name), { cmds: true });
       const byName = n => members.find(c => c.name === n);
-      await this.post(convId, r.msgs.map(m => ({ sender: byName(m.name).id, type: m.type, content: m.content, cmd: m.cmd })), { at });
+            await this.post(convId, r.msgs.filter(m => byName(m.name)).map(m => ({ sender: byName(m.name).id, type: m.type, content: m.content, cmd: m.cmd })), { at });
       for (const it of r.intents) {
         const f = byName(it.from);
         if (f) await Social.queueIntent(g.personaId, f.id, it.to, it.reason);

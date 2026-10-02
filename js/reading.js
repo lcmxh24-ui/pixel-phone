@@ -165,7 +165,7 @@ Gen.read = function (rid, { auto = false } = {}) {
     const { system, messages } = await Reading.buildPrompt(room, convId, auto);
     const r = Prompt.parseLines(await API.claude(system, messages, { maxTokens: 1200 }), members.map(c => c.name));
     const byName = n => members.find(c => c.name === n);
-    await this.post(convId, r.msgs.map(m => ({ sender: byName(m.name).id, type: m.type, content: m.content })));
+        await this.post(convId, r.msgs.filter(m => byName(m.name)).map(m => ({ sender: byName(m.name).id, type: m.type, content: m.content })));
     for (const it of r.intents) {
       const f = byName(it.from);
       if (f) await Social.queueIntent(room.personaId, f.id, it.to, it.reason);

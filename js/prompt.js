@@ -381,21 +381,44 @@ ${Media.rules(true)}`);
     return out;
   },
 
-   // 群聊 / 角色间私聊输出：名字：内容 + [私聊]A→B：原因。cmds 为 true 时识别群管理操作
+     // 名字容错：AI 可能写成简繁不同、异体字或带前后缀的名字
+  matchName(names, raw) {
+    const s = String(raw).trim().replace(/^[【\[（(]+|[】\]）)]+$/g, '').replace(/\s+/g, '');
+    if (!s) return null;
+    const exact = names.find(n => n === s);
+    if (exact) return exact;
+    const sub = names.filter(n => n.includes(s) || s.includes(n));
+    if (sub.length === 1) return sub[0];
+    // 按相同字符比例匹配，应对简繁体和异体字（陽/阳、絵/绘、烏/乌）
+    let best = null, bs = 0;
+    for (const n of names) {
+      const chars = [...n];
+      const same = [...s].filter(c => chars.includes(c)).length;
+      const sc = same / Math.max(n.length, s.length);
+      if (sc > bs) { bs = sc; best = n; }
+    }
+    return bs >= 0.5 ? best : null;
+  },
+
+  // 群聊 / 角色间私聊输出：名字：内容 + [私聊]A→B：原因。cmds 为 true 时识别群管理操作
   parseLines(text, names, { cmds = false } = {}) {
     const msgs = [], intents = [];
     for (let l of String(text).split(/\n+/)) {
       l = l.trim().replace(/^[*\-•]\s*/, '');
       if (!l || /^[-—*_=]{3,}$/.test(l)) continue;
       const it = l.match(/^\[私聊\]\s*(.+?)\s*(?:→|->|=>|>)\s*(.+?)\s*[:：]\s*(.+)$/);
-      if (it) { intents.push({ from: it[1].trim(), to: it[2].trim().replace(/^@/, ''), reason: it[3] }); continue; }
+      if (it) { intents.push({ from: this.matchName(names, it[1]) || it[1].trim(), to: it[2].trim().replace(/^@/, ''), reason: it[3] }); continue; }
       const mm = l.match(/^[【\[]?(.{1,24}?)[】\]]?\s*[:：]\s*(.+)$/);
-      const name = mm && names.find(n => n === mm[1].trim());
+      const name = mm && this.matchName(names, mm[1]);
       if (name) {
         const cmd = cmds && GroupAdmin.parse(mm[2]);
         msgs.push(cmd ? { name, cmd, type: 'sys', content: '' } : { name, ...this.typed(mm[2]) });
+      } else if (mm && !/[，。！？、,.!?]/.test(mm[1])) {
+        // 看起来是"名字：内容"但名字对不上，宁可丢掉也不要错归给别人
+        Log.add('群聊里有对不上的名字：' + mm[1].trim(), '检查角色名字是否和 AI 写的一致（简繁体、异体字）');
+      } else if (msgs.length) {
+        msgs.push({ name: msgs.at(-1).name, ...this.typed(l) });
       }
-      else if (msgs.length) msgs.push({ name: msgs.at(-1).name, ...this.typed(l) });
     }
     return { msgs, intents };
   },
