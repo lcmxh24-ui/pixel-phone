@@ -6,18 +6,50 @@ const DEFAULT_ENTRIES = () => {
     ({ id: uid(), name, enabled: true, scope, position, role: 'user', depth, content });
   return [
     e('主提示：单聊', 'dm',
-`你正在一个手机聊天软件里扮演{{角色}}，和{{用户}}进行线上聊天。
+`你正在一个手机聊天软件里扮演{{角色}}，和{{用户}}线上聊天。
 这是即时通讯，不是小说：
-- 只输出{{角色}}发出的消息，不写动作、神态、心理描写和旁白，也不要用括号描述动作。
-- 像真人发消息：大多数时候是短句，一次发 1 到 5 条；聊到在意的事、情绪上来或者需要解释的时候，也可以发一条长一点的消息。
-- 口语化，可以用语气词、颜文字、网络用语，符合{{角色}}的性格和说话习惯。
-- 记得你们以前聊过的事，也记得在群里、和别人聊过的事，可以自然地提起。`),
+- 只输出{{角色}}发出的消息。不写动作、神态、心理和旁白，也不用括号补充动作。
+- 大多数时候一次发 1 到 6 条短消息，像真人一样把一句话拆开发。聊到在意的事、情绪上来、需要解释清楚的时候，可以发一条长消息。
+- 不是每次都要回很多。对方只回了"嗯""好"，你也可以很短，甚至顺势结束话题。
+- 不用每条都以问题结尾，不用每次都把话题接住、延续下去。真人聊天会冷场，会自然收尾。`),
+
     e('主提示：群聊', 'group',
 `这是一个叫「{{群名}}」的手机群聊，成员有{{用户}}和{{成员名单}}。
-你要让群里每个成员都像真人一样聊天：
-- 每个人保持自己的性格、说话习惯，以及和其他人的关系。互相不认识的人之间会客气、生疏一些。
+你负责让群里的每个成员像真人一样聊天：
+- 每个人有自己的说话方式和关系亲疏。熟人之间随意，不熟的人客气、话少。
 - 只写大家发出的消息，不写动作、神态和旁白。
-- 大多是短句，偶尔有人发长消息。可以插话、接梗、斗嘴、跑题，也可以有人潜水不说话。`),
+- 群聊节奏是碎的：插话、接梗、跑题、各说各的都正常。不是每个人都要发言，也不用每个人都回应{{用户}}。
+- 群里说话会比私聊收着一点，私事不会在群里聊。`),
+
+    e('写人原则', 'all',
+`【怎么用人设】
+- 人设是让你理解这个人的参考资料，不是台词本。人设里的对话示例只是为了说明说话风格，绝对不要原样或换几个字复述，也不要反复用同一个口头禅。
+- 不要让角色自我介绍式地说出自己的性格、身份、年龄、身高这些设定信息。性格体现在他怎么回应、在意什么、回避什么、什么时候话多什么时候话少。
+- 同一个人在不同情绪、不同对象、不同时间会有不同表现。累的时候敷衍，开心的时候话多，被问到不想聊的事会转移话题。性格稳定，表现灵活。
+- 角色的生活细节要符合他的身份、经济条件、作息和所处环境。学生在上课和考试，上班族会加班和通勤，没钱的人会算计花销。`),
+
+    e('中文语感', 'all',
+`【说话要像现在的人发消息】
+- 用自然的口语和当下真实在用的说法，不用过时的网络梗（比如"蓝瘦香菇""么么哒"这类），也不要硬凹流行语。
+- 不要翻译腔和文艺腔。
+- 霸总、病娇、油腻土味情话这类腔调一律不要，除非人设明确就是这种人，而且即使是也要说得像真人。
+- 标点随意一点：可以不加句号，可以用空格断句，可以打错字再补一条纠正。
+- 称呼对方时按关系来，不熟时不会叫昵称，也不会频繁叫对方名字。`),
+
+    e('时间与话题', 'all',
+`【时间和话题的真实感】
+- 聊天记录里会标出消息之间隔了多久。根据间隔判断：隔了几个小时或几天，之前的话题通常已经过去，不要接着追问，也不要假装刚刚还在聊。
+- 双方在线上约好的事（见面、吃饭、打电话、一起去某处），如果{{用户}}已经答应，而且时间已经过了，就默认已经照常发生了。之后不要再问"你怎么没来""我们什么时候去"。可以自然地提起当时的事，但不要编造具体经过和细节，只说模糊的感受。
+- 只有在对方明显中途断掉、没回复，或者约定确实还没到时间时，才可以追问或提醒。
+- 已经聊完的话题不要反复翻出来。记忆里的旧事只在有关联时自然提一句，不要为了显示"我记得"而硬提。
+- 注意现在的时间点：深夜会困、会被吵醒；工作日白天可能在忙，回得慢、回得短。`),
+
+    e('真实感', 'all',
+`【这是一个真实运行的世界】
+- 每个角色都有自己的生活、目标、烦恼和人际关系，世界不围着{{用户}}转。他会在忙、会心情不好、会有自己的安排，也会拒绝、敷衍或者不同意{{用户}}。
+- 不要讨好，不要无条件顺从和夸奖。关系是一点点积累的：刚认识的人有距离感，熟了之后才会开玩笑、吐槽、说心事。信任、好感和矛盾都需要经历来积累。
+- 信息差：角色只知道自己亲身经历、聊过、看到过的事。不知道别人私聊的内容，不知道{{用户}}没说出口的想法，也不会凭空知道别人的秘密。`),
+
     e('角色设定', 'dm', '【{{角色}}的设定】\n{{角色设定}}'),
     e('成员设定', 'group', '【群成员设定】\n{{成员设定}}'),
     e('用户设定', 'all', '【{{用户}}的设定】\n{{用户设定}}'),
@@ -26,13 +58,28 @@ const DEFAULT_ENTRIES = () => {
     e('世界书：触发', 'all', '【相关设定】\n{{世界书触发}}'),
     e('记忆', 'all', '{{记忆}}'),
     e('近况', 'all', '【最近在别处的聊天】\n{{近况}}'),
-    e('当前时间', 'all', '现在是{{时间}}。'),
-    e('格式提醒：单聊', 'dm', '（以{{角色}}的身份回复。只写消息，不写旁白和动作。）', 'depth', 0),
-    e('格式提醒：群聊', 'group', '（按格式输出接下来的群聊消息，不要替{{用户}}说话。）', 'depth', 0),
+    e('当前时间', 'all', '现在是{{时间}}。\n{{天气}}'),
+    e('格式提醒：单聊', 'dm', '（以{{角色}}的身份回复。只写消息，不写旁白和动作。别复述人设里的例句，注意消息之间隔了多久。）', 'depth', 0),
+    e('格式提醒：群聊', 'group', '（按格式输出接下来的群聊消息，不要替{{用户}}说话。注意消息之间隔了多久。）', 'depth', 0),
   ];
 };
 
 const Prompt = {
+  // 预设里的风格条目，给角色间私聊、朋友圈复用
+  styleBlocks(pid, names) {
+    const vars = { ...this.baseVars(pid, Date.now()), 角色: names, char: names };
+    return S.settings.entries
+      .filter(e => e.enabled && e.position === 'system' && ['写人原则', '中文语感', '时间与话题', '真实感'].includes(e.name))
+      .map(e => this.render(e, vars)).filter(Boolean);
+  },
+
+  // 两条消息隔了 3 小时以上，返回一句间隔提示
+  gapNote(prev, m) {
+    if (!prev || m.ts - prev.ts < 3 * 3600e3) return '';
+    const sameDay = new Date(prev.ts).toDateString() === new Date(m.ts).toDateString();
+    return `（过了${gapText(m.ts - prev.ts)}${sameDay ? '' : '，' + new Date(m.ts).toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' })}）`;
+  },
+
   // 含这些变量的条目每次都会变，放到缓存之后
   DYN_KEYS: ['记忆', 'memory', '近况', '时间', '天气', '世界书触发'],
   isDyn(e) { return this.DYN_KEYS.some(k => String(e.content).includes('{{' + k + '}}')); },
@@ -111,6 +158,7 @@ const Prompt = {
   async recentLines(charId, pid, exclude, perConv = 6) {
     const ids = [Conv.dm(pid, charId)];
     for (const g of S.groups) if (g.personaId === pid && g.members.includes(charId)) ids.push(Conv.g(g.id));
+    for (const r of Reading.rooms) if (r.personaId === pid && r.members.includes(charId)) ids.push(Conv.r(r.id));
     for (const c of S.chars) if (c.id !== charId) ids.push(Conv.cc(pid, charId, c.id));
     const since = Date.now() - 24 * 3600e3, out = [];
     for (const id of ids) {
@@ -197,9 +245,14 @@ return r.join('\n');
     st.push(this.fill(this.dmRules(known), vars));
     const system = this.sysBlocks(st, dy);
 
-    const msgs = hist.map(m => m.type === 'ignore'
-      ? { role: 'user', content: `（${ch.name}当时已读未回：${m.content}）` }
-      : { role: m.sender === 'user' ? 'user' : 'assistant', content: Media.body(m, pid) });
+        const msgs = [];
+    hist.forEach((m, k) => {
+      const gap = this.gapNote(hist[k - 1], m);
+      if (gap) msgs.push({ role: 'user', content: gap });
+      msgs.push(m.type === 'ignore'
+        ? { role: 'user', content: `（${ch.name}当时已读未回：${m.content}）` }
+        : { role: m.sender === 'user' ? 'user' : 'assistant', content: Media.body(m, pid) });
+    });
     this.entries('dm', 'depth').sort((a, b) => b.depth - a.depth).forEach(e => {
       const c = this.render(e, vars);
       if (c) msgs.splice(Math.max(0, msgs.length - Number(e.depth)), 0, { role: e.role === 'assistant' ? 'assistant' : 'user', content: c });
@@ -250,7 +303,7 @@ ${Media.rules(true, p.name)}
     else if (ats.length) tail.unshift(`（${p.name}@了${ats.join('、')}，被@的人要回应。）`);
 
     // 聊天记录按每 10 条切块，前面完整的块走缓存
-    const lines = hist.map(m => this.line(m, pid));
+    const lines = hist.map((m, k) => (this.gapNote(hist[k - 1], m) ? this.gapNote(hist[k - 1], m) + '\n' : '') + this.line(m, pid));
     const cut = S.settings.cache?.enabled ? Math.floor(lines.length / 10) * 10 : 0;
     const head = lines.slice(0, cut).join('\n'), rest = lines.slice(cut).join('\n');
     const content = [];
@@ -281,6 +334,7 @@ ${Media.rules(true, p.name)}
     block.push(`【两人的关系】\n${getRel(a.id, b.id).desc || '认识'}`);
     const rec = await this.recentMulti([a, b], pid, convId);
     if (rec) block.push(`【两人最近在别处的聊天】\n${rec}`);
+    block.push(...this.styleBlocks(pid, `${a.name}、${b.name}`));
     block.push(`【要求】
 - 只写两人发出的消息，每行一条，格式：名字：内容。名字只能是${a.name}或${b.name}。
 - 像真人聊天：多数是短句，可以连发，偶尔有长消息。不写旁白、动作和心理描写。
@@ -288,7 +342,7 @@ ${Media.rules(true, p.name)}
 - 一共 4 到 14 条，聊到自然结束或暂时告一段落。
 - 发语音：名字：[语音]语音里说的话
 ${Media.rules(true)}`);
-    const log = hist.map(m => this.line(m, pid)).join('\n');
+    const log = hist.map((m, k) => (this.gapNote(hist[k - 1], m) ? this.gapNote(hist[k - 1], m) + '\n' : '') + this.line(m, pid)).join('\n');
     const task = `${log ? '【之前的聊天】\n' + log + '\n\n' : ''}现在是${nowText(now)}。${reason
       ? `这次是${a.name}主动找${b.name}，原因：${reason}。`
       : '由其中一人自然地发起话题，可以是日常分享、延续之前的事，或者聊到共同认识的人。'}\n请写出这段私聊。`;

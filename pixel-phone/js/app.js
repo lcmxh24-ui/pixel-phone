@@ -6,6 +6,15 @@ const THEMES = {
   cute:  { name: '可爱薄荷', bg: '#e9f7df', panel: '#fffdf0', text: '#5a4632', border: '#7a5c3e', accent: '#ffe36e', accent2: '#8fd694', me: '#c6f0b0', them: '#fff7c2' },
   night: { name: '暗夜 GB', bg: '#1b2a12', panel: '#2d4a1e', text: '#e6f2a0', border: '#0c1408', accent: '#f2c94c', accent2: '#7fb03a', me: '#4f7a2a', them: '#3a5a24' },
 };
+// 预设字体。g 是 Google Fonts 的名字，用到时才加载
+const FONTS = {
+  pixel:  { name: '像素 DotGothic16', family: "'DotGothic16'", g: 'DotGothic16' },
+  vt:     { name: 'VT323（只有英文）', family: "'VT323','DotGothic16'", g: 'VT323' },
+  press:  { name: 'Press Start 2P（只有英文）', family: "'Press Start 2P','DotGothic16'", g: 'Press+Start+2P' },
+  silk:   { name: 'Silkscreen（只有英文）', family: "'Silkscreen','DotGothic16'", g: 'Silkscreen' },
+  system: { name: '系统默认', family: '-apple-system' },
+  custom: { name: '自定义字体', family: "'UserFont'" },
+};
 const COLOR_LABELS = { bg: '背景', panel: '面板', text: '文字', border: '描边', accent: '主色（黄）', accent2: '副色（绿）', me: '我的气泡', them: '对方气泡' };
 
 const DEFAULTS = {
@@ -22,7 +31,7 @@ const DEFAULTS = {
   wallet: { balance: 1000 },
   personas: [],
   activePersona: '',
-  theme: { preset: 'retro', colors: { ...THEMES.retro }, wallpaper: '' },
+  theme: { preset: 'retro', colors: { ...THEMES.retro }, wallpaper: '', font: 'pixel', fontUrl: '', fontSize: 15, saved: [] },
   entries: null,
   presetVer: 0,
   ver: 0,
@@ -132,11 +141,13 @@ const Conv = {
   dm: (pid, cid) => `dm:${pid}:${cid}`,
   cc: (pid, a, b) => `cc:${pid}:${[a, b].sort().join(':')}`,
   g: gid => `g:${gid}`,
+  r: rid => `r:${rid}`,
   parse(id) {
     const [t, ...r] = String(id).split(':');
     if (t === 'dm') return { type: 'dm', pid: r[0], charId: r[1] };
     if (t === 'cc') return { type: 'cc', pid: r[0], a: r[1], b: r[2] };
     if (t === 'g') { const group = S.groups.find(x => x.id === r[0]); return { type: 'g', gid: r[0], group, pid: group?.personaId }; }
+    if (t === 'r') { const room = Reading.room(r[0]); return { type: 'r', rid: r[0], room, pid: room?.personaId }; }
     return { type: '?' };
   },
   members(id) {
@@ -144,6 +155,7 @@ const Conv = {
     if (i.type === 'dm') return [charById(i.charId)].filter(Boolean);
     if (i.type === 'cc') return [charById(i.a), charById(i.b)].filter(Boolean);
     if (i.type === 'g') return (i.group?.members || []).map(charById).filter(Boolean);
+    if (i.type === 'r') return (i.room?.members || []).map(charById).filter(Boolean);
     return [];
   },
   involves(id, charId) {
@@ -155,6 +167,7 @@ const Conv = {
     if (i.type === 'dm') return `${persona(pid).name}和${charById(i.charId)?.name || '?'}的私聊`;
     if (i.type === 'cc') return `${charById(i.a)?.name || '?'}和${charById(i.b)?.name || '?'}的私聊`;
     if (i.type === 'g') return `群聊「${i.group?.name || '?'}」`;
+    if (i.type === 'r') return `一起看《${Reading.book(i.room?.bookId)?.title || '?'}》`;
     return '未知会话';
   },
 };
@@ -197,6 +210,43 @@ function applyTheme() {
   for (const k in COLOR_LABELS) root.setProperty('--' + k, t.colors[k]);
   const wp = safeUrl(t.wallpaper);
   root.setProperty('--wallpaper', wp ? `url("${wp}")` : 'none');
+  applyFont().catch(e => console.warn(e));
+}
+
+async function applyFont() {
+  const t = S.settings.theme, f = FONTS[t.font] || FONTS.pixel, root = document.documentElement.style;
+  if (f.g && !document.querySelector(`link[data-font="${f.g}"]`)) {
+    const l = document.createElement('link');
+    l.rel = 'stylesheet';
+    l.dataset.font = f.g;
+    l.href = `https://fonts.googleapis.com/css2?family=${f.g}&display=swap`;
+    document.head.appendChild(l);
+  }
+  if (t.font === 'custom') await loadUserFont();
+  root.setProperty('--font', f.family + ",'PingFang SC','Hiragino Sans GB',sans-serif");
+  root.setProperty('--font-size', (Number(t.fontSize) || 15) + 'px');
+}
+
+// 自定义字体：填了链接优先用链接，否则用上传的文件
+let _userFont = null, _userFontKey = '';
+async function loadUserFont() {
+  const t = S.settings.theme;
+  const local = t.fontUrl ? null : (await DB.get('kv', 'userFont'))?.value;
+  const src = t.fontUrl ? `url("${t.fontUrl}")` : local ? `url("${local.data}")` : '';
+  const key = t.fontUrl || (local ? 'local:' + local.name + local.data.length : '');
+  if (key === _userFontKey) return;
+  if (_userFont) document.fonts.delete(_userFont);
+  _userFont = null;
+  _userFontKey = key;
+  if (!src) return;
+  try {
+    const ff = new FontFace('UserFont', src);
+    await ff.load();
+    document.fonts.add(ff);
+    _userFont = ff;
+  } catch (e) {
+    toast('自定义字体加载失败，链接可能不允许跨域', 3500);
+  }
 }
 
 // ===== 路由 =====
@@ -251,6 +301,7 @@ const APPS = [
   { id: 'peek', icon: '👀', name: '偷看' },
   { id: 'stickers', icon: '🐸', name: '表情包' },
   { id: 'rels', icon: '🕸️', name: '关系网' },
+  { id: 'books', icon: '📚', name: '共读' },
   { id: 'moments', icon: '🖼️', name: '朋友圈' },
   { id: 'wallet', icon: '💰', name: '钱包' },
   { id: 'weather', icon: '🌦️', name: '天气' },
@@ -535,24 +586,124 @@ Views.preset = async () => {
 // ===== 主题 =====
 Views.theme = async () => {
   const t = S.settings.theme;
+  t.saved ??= [];
+  const hasLocal = !!(await DB.get('kv', 'userFont'));
   screen().innerHTML = topbar('主题') + `<div class="body">
-    <div class="card flex" style="flex-wrap:wrap;gap:6px">${Object.entries(THEMES).map(([k, v]) =>
-      `<button class="btn ${t.preset === k ? '' : 'ghost'}" data-preset="${k}">${v.name}</button>`).join('')}</div>
+    <h3>配色</h3>
+    <div class="card flex" style="flex-wrap:wrap;gap:6px">
+      ${Object.entries(THEMES).map(([k, v]) => `<button class="btn ${t.preset === k ? '' : 'ghost'}" data-preset="${k}">${v.name}</button>`).join('')}
+      ${t.saved.map(s => `<button class="btn ${t.preset === 'saved:' + s.id ? '' : 'ghost'}" data-saved="${s.id}">
+        <span class="swatch" style="background:${esc(s.colors.accent2)}"></span><span class="swatch" style="background:${esc(s.colors.accent)}"></span>${esc(s.name)}</button>`).join('')}
+      <button class="btn ghost" data-act="save">＋ 保存当前配色</button>
+    </div>
     <div class="card">${Object.entries(COLOR_LABELS).map(([k, v]) =>
       `<label class="row"><span>${v}</span><input type="color" data-path="theme.colors.${k}" value="${esc(t.colors[k])}"></label>`).join('')}</div>
+
+    <h3>字体</h3>
+    <div class="card">
+      <label class="field"><span>字体</span><select id="font">${Object.entries(FONTS).map(([k, v]) =>
+        `<option value="${k}" ${t.font === k ? 'selected' : ''}>${v.name}</option>`).join('')}</select></label>
+      ${t.font === 'custom' ? `
+        ${field('字体文件链接（.ttf / .otf / .woff2）', 'theme.fontUrl', { ph: 'https://...（填了就优先用链接）' })}
+        <div class="flex" style="gap:6px;flex-wrap:wrap">
+          <button class="btn ghost" data-act="upfont">上传本地字体</button>
+          ${hasLocal ? '<button class="btn danger" data-act="rmfont">删除已上传的字体</button>' : ''}
+        </div>
+        <input type="file" id="fontf" accept=".ttf,.otf,.woff,.woff2" hidden>
+        <p class="empty">${hasLocal && !t.fontUrl ? '正在使用已上传的字体。' : hasLocal ? '已上传字体，但现在优先用链接。' : ''}</p>` : ''}
+      ${field('字号（px）', 'theme.fontSize', { type: 'number' })}
+      <p class="font-demo">预览：你好呀，今天吃什么 Hello 123 ♥</p>
+    </div>
+
+    <h3>壁纸</h3>
     <div class="card">${field('壁纸链接', 'theme.wallpaper', { ph: 'https://...（留空不用壁纸）' })}</div>
   </div>`;
-  bindFields(screen());
-  screen().onclick = async e => {
-    const k = e.target.closest('[data-preset]')?.dataset.preset;
-    if (!k) return;
-    t.preset = k;
-    t.colors = { ...THEMES[k] };
-    delete t.colors.name;
+
+  // 手动调颜色后，取消预设的选中状态
+  bindFields(screen(), path => {
+    if (path.startsWith('theme.colors') && t.preset) { t.preset = ''; saveSettings(); }
+  });
+
+  $('#font').onchange = async e => {
+    t.font = e.target.value;
     await saveSettings();
     applyTheme();
     Router.render();
   };
+
+  const ff = $('#fontf');
+  if (ff) ff.onchange = async () => {
+    const f = ff.files[0];
+    if (!f) return;
+    if (f.size > 20 * 1024 * 1024) return toast('字体文件太大了（超过 20MB）');
+    toast('读取字体中…');
+    const data = await new Promise((res, rej) => {
+      const r = new FileReader();
+      r.onload = () => res(r.result);
+      r.onerror = () => rej(r.error);
+      r.readAsDataURL(f);
+    });
+    await DB.put('kv', { id: 'userFont', value: { name: f.name, data } });
+    t.fontUrl = '';
+    await saveSettings();
+    applyTheme();
+    toast('已换成 ' + f.name);
+    Router.render();
+  };
+
+  screen().onclick = async e => {
+    const k = e.target.closest('[data-preset]')?.dataset.preset;
+    if (k) {
+      t.preset = k;
+      t.colors = { ...THEMES[k] };
+      delete t.colors.name;
+      return done();
+    }
+
+    const sid = e.target.closest('[data-saved]')?.dataset.saved;
+    if (sid) {
+      const s = t.saved.find(x => x.id === sid);
+      const a = await actionSheet([
+        { label: '使用这套配色', value: 'use' },
+        { label: '用当前颜色覆盖它', value: 'over' },
+        { label: '重命名', value: 'ren' },
+        { label: '删除', value: 'del', danger: true },
+      ]);
+      if (a === 'use') { t.colors = { ...s.colors }; t.preset = 'saved:' + s.id; }
+      if (a === 'over') { s.colors = { ...t.colors }; t.preset = 'saved:' + s.id; toast('已覆盖'); }
+      if (a === 'ren') { const n = (await editText('配色名字', s.name, false))?.trim(); if (n) s.name = n; }
+      if (a === 'del') {
+        if (!await confirmBox(`删除配色「${s.name}」`)) return;
+        t.saved = t.saved.filter(x => x !== s);
+        if (t.preset === 'saved:' + s.id) t.preset = '';
+      }
+      if (a) return done();
+      return;
+    }
+
+    const a = e.target.closest('[data-act]')?.dataset.act;
+    if (a === 'save') {
+      const n = (await editText('给这套配色起个名字', '我的配色' + (t.saved.length + 1), false))?.trim();
+      if (!n) return;
+      const s = { id: uid(), name: n, colors: { ...t.colors } };
+      t.saved.push(s);
+      t.preset = 'saved:' + s.id;
+      toast('已保存');
+      return done();
+    }
+    if (a === 'upfont') return ff.click();
+    if (a === 'rmfont') {
+      if (!await confirmBox('删除已上传的字体')) return;
+      await DB.del('kv', 'userFont');
+      return done();
+    }
+  };
+
+  async function done() {
+    await saveSettings();
+    applyTheme();
+    Router.render();
+  }
 };
 
 // ===== 设置 =====
@@ -576,6 +727,7 @@ Views.settings = async () => {
       ${field('接口地址', 'embed.url', { ph: 'https://.../v1/embeddings' })}
       ${field('Key', 'embed.key', { type: 'password' })}
       ${field('模型', 'embed.model', { ph: '比如 BAAI/bge-m3' })}
+      <button class="btn ghost" data-act="t-embed">测试连接</button>
     </div>
     <h3>聊天</h3><div class="card">
       ${field('带入的历史消息条数', 'chat.historyLimit', { type: 'number' })}
@@ -600,6 +752,7 @@ Views.settings = async () => {
       ${field('Key', 'image.key', { type: 'password' })}
       ${field('模型', 'image.model')}
       ${field('额外参数（JSON）', 'image.extra', { type: 'textarea', ph: '{"size":"512x512"}' })}
+      <button class="btn ghost" data-act="t-image">测试生图</button>
     </div>
     <h3>语音 TTS（可选）</h3><div class="card">
       ${field('启用声音播放', 'tts.enabled', { type: 'check' })}
@@ -607,6 +760,8 @@ Views.settings = async () => {
       ${field('Key', 'tts.key', { type: 'password' })}
       ${field('模型', 'tts.model')}
       ${field('音色', 'tts.voice')}
+      <button class="btn ghost" data-act="t-tts">测试播放</button>
+      <p class="empty">测试不受"启用"开关影响。</p>
     </div>
     <h3>数据</h3><div class="card flex" style="gap:8px;flex-wrap:wrap">
       <button class="btn" data-act="export">导出备份</button>
@@ -619,6 +774,20 @@ Views.settings = async () => {
   $('#imp').onchange = e => importData(e.target.files[0]);
   screen().onclick = async e => {
     const a = e.target.closest('[data-act]')?.dataset.act;
+    if (a?.startsWith('t-')) {
+      const kind = a.slice(2);
+      toast(kind === 'image' ? '生成中，可能要等十几秒…' : '测试中…', 4000);
+      try {
+        const r = await API.test(kind);
+        if (kind === 'image') {
+          const { el, close } = modal(`<h3>生图成功</h3><img class="big-img" src="${esc(safeUrl(r))}" alt="测试生成的图片"><p class="empty">点任意处关闭</p>`);
+          el.onclick = close;
+        } else toast(r, 3000);
+      } catch (err) {
+        const msg = err.message === 'Failed to fetch' ? '请求被拦截（可能是地址错了，或接口不允许浏览器跨域调用）' : err.message;
+        toast('失败：' + msg, 5000);
+      }
+    }
     if (a === 'test') {
       toast('测试中…');
       try { const r = await API.claude('只回复"OK"。', [{ role: 'user', content: 'ping' }], { maxTokens: 10 }); toast('连接成功：' + r.slice(0, 20)); }
@@ -695,6 +864,7 @@ async function boot() {
   S.lastRead = (await DB.get('kv', 'lastRead'))?.value || {};
   await migrate();
   await Life.init();
+  await Reading.init();
   await WB.init();
   await API.loadStats();
   await saveSettings();

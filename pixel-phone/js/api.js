@@ -1,8 +1,12 @@
-// 接口封装：Claude / 向量 / 语音。都是浏览器直连，Key 只存在本机
+// 接口封装：Claude / 向量 / 语音 + 缓存统计 + 连接测试。都是浏览器直连，Key 只存在本机
 const API = {
   // 缓存统计：input 是没走缓存的部分，read 是命中，write 是写入缓存
   stats: { calls: 0, input: 0, read: 0, write: 0 },
-  async loadStats() { this.stats = (await DB.get('kv', 'cacheStats'))?.value || this.stats; },
+
+  async loadStats() {
+    this.stats = (await DB.get('kv', 'cacheStats'))?.value || this.stats;
+  },
+
   record(u) {
     if (!u) return;
     const s = this.stats;
@@ -12,6 +16,7 @@ const API = {
     s.write += u.cache_creation_input_tokens || 0;
     DB.put('kv', { id: 'cacheStats', value: s });
   },
+
   hitRate() {
     const s = this.stats, total = s.input + s.read + s.write;
     return total ? Math.round(s.read / total * 100) : 0;
@@ -40,7 +45,7 @@ const API = {
         body: JSON.stringify(body),
       });
       const data = await r.json().catch(() => ({}));
-           if (r.ok) {
+      if (r.ok) {
         this.record(data.usage);
         return (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('').trim();
       }
@@ -63,10 +68,10 @@ const API = {
     return data.data.map(d => d.embedding);
   },
 
-  // OpenAI 兼容的 /audio/speech。没开启时返回 false，只显示文字
-  async speak(text) {
+  // OpenAI 兼容的 /audio/speech。force 为 true 时跳过"启用"开关，给测试用
+  async speak(text, force = false) {
     const t = S.settings.tts;
-    if (!t.enabled || !t.url) return false;
+    if ((!t.enabled && !force) || !t.url) return false;
     const r = await fetch(t.url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...(t.key ? { Authorization: 'Bearer ' + t.key } : {}) },
@@ -78,5 +83,35 @@ const API = {
     audio.onended = () => URL.revokeObjectURL(url);
     await audio.play();
     return true;
+  },
+
+  // 各接口连接测试，成功返回说明文字，失败抛出错误
+  async test(kind) {
+    if (kind === 'embed') {
+      if (!S.settings.embed.url) throw new Error('还没填向量接口地址');
+      const v = (await this.embed(['测试一下向量接口']))?.[0];
+      if (!Array.isArray(v) || !v.length) throw new Error('返回格式不对，没有拿到向量');
+      return `连接成功，向量维度 ${v.length}`;
+    }
+    if (kind === 'image') {
+      if (!S.settings.image.url) throw new Error('还没填生图接口地址');
+      const url = await Media.genImage('pixel art, a small green frog wearing a yellow hat');
+      if (!url) throw new Error('接口没有返回图片');
+      // 链接模板模式不会真正请求，这里加载一次确认图片能打开
+      await new Promise((res, rej) => {
+        const img = new Image();
+        const timer = setTimeout(() => rej(new Error('图片加载超时')), 60e3);
+        img.onload = () => { clearTimeout(timer); res(); };
+        img.onerror = () => { clearTimeout(timer); rej(new Error('图片打不开，检查地址或参数')); };
+        img.src = url;
+      });
+      return url;
+    }
+    if (kind === 'tts') {
+      if (!S.settings.tts.url) throw new Error('还没填语音接口地址');
+      await this.speak('你好，这是一条测试语音。', true);
+      return '连接成功，正在播放';
+    }
+    throw new Error('未知的测试类型');
   },
 };

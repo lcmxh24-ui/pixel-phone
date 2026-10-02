@@ -96,13 +96,14 @@ const Memory = {
     if (!msgs.length) return 0;
     const every = Number(S.settings.memory.every) || 10;
     const userN = msgs.filter(m => m.sender === 'user').length;
-    const due = force || (info.type === 'cc' ? msgs.length >= 6 : userN >= every || (info.type === 'g' && msgs.length >= every * 4));
+    const due = force || (info.type === 'cc' ? msgs.length >= 6 : userN >= every || (['g', 'r'].includes(info.type) && msgs.length >= every * 4));
     if (!due || this._busy[convId]) return 0;
     this._busy[convId] = true;
     try {
       const names = chars.map(c => c.name);
       const pname = persona(info.pid).name;
-      const kind = { dm: `${names[0]}和${pname}的私聊`, g: `群聊「${info.group?.name}」`, cc: `${names.join('和')}之间的私聊` }[info.type];
+      const kind = { dm: `${names[0]}和${pname}的私聊`, g: `群聊「${info.group?.name}」`, r: `和${pname}一起看《${Reading.book(info.room?.bookId)?.title || '?'}》时的聊天`,
+cc: `${names.join('和')}之间的私聊` }[info.type];
       const log = msgs.map(m => Prompt.line(m, info.pid)).join('\n');
       const system = `你是记忆整理助手。阅读一段手机聊天记录（${kind}），分别从 ${names.join('、')} 各自的视角，提炼值得长期记住的信息。
 要求：
@@ -111,7 +112,8 @@ const Memory = {
    - important：关系变化、约定承诺、重要事件、对方的重要个人信息（喜好、经历、身份）、强烈情绪。
    - normal：日常话题、一般细节、闲聊。
 3. 相似内容合并，寒暄忽略。每人 0 到 6 条。
-4. 只输出 JSON，不要其他文字。格式：{"名字":[{"text":"...","level":"normal"}]}`;
+4. 约定和计划要写明约定的时间，以及对方是否答应了，比如"林夏和小雨约了周六下午去看展，小雨答应了"。这样之后能判断这件事已经过去。
+5. 只输出 JSON，不要其他文字。格式：{"名字":[{"text":"...","level":"normal"}]}`;
       const out = await API.claude(system, [{ role: 'user', content: `日期：${new Date().toLocaleDateString('zh-CN')}\n\n${log}` }], { temperature: 0.3, maxTokens: 2000 });
       const obj = this.parseJSON(out);
       let total = 0;

@@ -39,8 +39,8 @@ const Wallet = {
   async send(convId) {
     const { i } = ChatUI.ctx(convId);
     let to = i.charId;
-    if (i.type === 'g') {
-      const ms = i.group.members.map(charById).filter(Boolean);
+       if (i.type === 'g' || i.type === 'r') {
+      const ms = Conv.members(convId);
       to = await actionSheet(ms.map(c => ({ label: '转给 ' + c.name, value: c.id })));
     }
     if (!to || !charById(to)) return;
@@ -180,7 +180,7 @@ const Moments = {
     const mine = (await this.list(pid)).filter(x => x.author === charId).slice(0, 3).map(x => '· ' + x.text).join('\n');
     const system = [`你在扮演${ch.name}，要发一条朋友圈。`, `【${ch.name}的设定】\n${ch.persona || '（无）'}`, mem,
       recent && `【最近的聊天】\n${recent}`, mine && `【最近发过的朋友圈，别重复】\n${mine}`,
-      `【要求】
+     ...Prompt.styleBlocks(pid, ch.name), `【要求】
 - 像真人发朋友圈，符合性格。可以是日常、心情、吐槽、分享，可以和最近的事有关，但不会把私聊内容直接公开。
 - 先写文字，可以很短。如果配图，另起一行写 [图片]画面描述，最多 3 张，也可以不配图。
 - 只输出朋友圈内容，不写解释。`].filter(Boolean).join('\n\n');

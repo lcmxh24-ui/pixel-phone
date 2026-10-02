@@ -90,6 +90,7 @@ const Gen = {
     const i = Conv.parse(convId);
     if (i.type === 'dm') return this.dm(convId);
     if (i.type === 'g') return this.group(i.gid);
+    if (i.type === 'r') return this.read(i.rid);
     if (i.type === 'cc') return this.cc(convId);
   },
 };
