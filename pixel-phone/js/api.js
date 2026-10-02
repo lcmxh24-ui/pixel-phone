@@ -1,0 +1,82 @@
+// 接口封装：Claude / 向量 / 语音。都是浏览器直连，Key 只存在本机
+const API = {
+  // 缓存统计：input 是没走缓存的部分，read 是命中，write 是写入缓存
+  stats: { calls: 0, input: 0, read: 0, write: 0 },
+  async loadStats() { this.stats = (await DB.get('kv', 'cacheStats'))?.value || this.stats; },
+  record(u) {
+    if (!u) return;
+    const s = this.stats;
+    s.calls++;
+    s.input += u.input_tokens || 0;
+    s.read += u.cache_read_input_tokens || 0;
+    s.write += u.cache_creation_input_tokens || 0;
+    DB.put('kv', { id: 'cacheStats', value: s });
+  },
+  hitRate() {
+    const s = this.stats, total = s.input + s.read + s.write;
+    return total ? Math.round(s.read / total * 100) : 0;
+  },
+
+  async claude(system, messages, opt = {}) {
+    const c = S.settings.claude;
+    if (!c.key) throw new Error('还没填 Claude API Key');
+    const body = {
+      model: c.model,
+      max_tokens: Number(opt.maxTokens || c.maxTokens || 1024),
+      temperature: Math.min(1, Math.max(0, Number(opt.temperature ?? c.temperature ?? 1))),
+      system,
+      messages,
+    };
+    // 429（限流）和 529（过载）自动重试两次
+    for (let tryN = 0; ; tryN++) {
+      const r = await fetch(c.baseUrl.replace(/\/+$/, '') + '/v1/messages', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-api-key': c.key,
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true',
+        },
+        body: JSON.stringify(body),
+      });
+      const data = await r.json().catch(() => ({}));
+           if (r.ok) {
+        this.record(data.usage);
+        return (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('').trim();
+      }
+      if ((r.status === 429 || r.status === 529) && tryN < 2) { await sleep(3000 * (tryN + 1)); continue; }
+      throw new Error(data.error?.message || 'HTTP ' + r.status);
+    }
+  },
+
+  // OpenAI 兼容的 /embeddings。没填地址返回 null，记忆改用本地匹配
+  async embed(texts) {
+    const e = S.settings.embed;
+    if (!e.url) return null;
+    const r = await fetch(e.url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(e.key ? { Authorization: 'Bearer ' + e.key } : {}) },
+      body: JSON.stringify({ model: e.model, input: texts }),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.error?.message || 'HTTP ' + r.status);
+    return data.data.map(d => d.embedding);
+  },
+
+  // OpenAI 兼容的 /audio/speech。没开启时返回 false，只显示文字
+  async speak(text) {
+    const t = S.settings.tts;
+    if (!t.enabled || !t.url) return false;
+    const r = await fetch(t.url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(t.key ? { Authorization: 'Bearer ' + t.key } : {}) },
+      body: JSON.stringify({ model: t.model, input: text, voice: t.voice }),
+    });
+    if (!r.ok) throw new Error('语音接口 HTTP ' + r.status);
+    const url = URL.createObjectURL(await r.blob());
+    const audio = new Audio(url);
+    audio.onended = () => URL.revokeObjectURL(url);
+    await audio.play();
+    return true;
+  },
+};
