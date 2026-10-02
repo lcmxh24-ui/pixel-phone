@@ -21,7 +21,7 @@ const DEFAULTS = {
   worldbook: { scanDepth: 6 },
   cache: { enabled: true },
   claude: { key: '', baseUrl: 'https://api.anthropic.com', model: 'claude-sonnet-4-5', maxTokens: 1024, temperature: 1 },
-  embed: { url: '', key: '', model: '' },
+  embed: { url: '', key: '', model: '', dims: '' },
   image: { url: '', key: '', model: '', extra: '' },
   tts: { enabled: false, url: '', key: '', model: '', voice: '' },
   memory: { every: 10, topK: 5, importantCap: 10, threshold: 0.2 },
@@ -309,6 +309,7 @@ const APPS = [
   { id: 'preset', icon: '📜', name: '预设' },
   { id: 'worldbook', icon: '📖', name: '世界书' },
   { id: 'theme', icon: '🎨', name: '主题' },
+  { id: 'health', icon: '🩺', name: '记忆体检' },
   { id: 'settings', icon: '⚙️', name: '设置' },
 ];
 
@@ -727,6 +728,9 @@ Views.settings = async () => {
       ${field('接口地址', 'embed.url', { ph: 'https://.../v1/embeddings' })}
       ${field('Key', 'embed.key', { type: 'password' })}
       ${field('模型', 'embed.model', { ph: '比如 BAAI/bge-m3' })}
+      ${field('向量维度（留空用模型默认）', 'embed.dims', { type: 'number', ph: '比如 1024 或 512' })}
+      <button class="btn ghost" data-act="revec">重新向量化全部记忆</button>
+      <p class="empty">换模型或改维度后要点一次，不然旧记忆匹配不上。</p>
       <button class="btn ghost" data-act="t-embed">测试连接</button>
     </div>
     <h3>聊天</h3><div class="card">
@@ -798,6 +802,18 @@ Views.settings = async () => {
       await DB.put('kv', { id: 'cacheStats', value: API.stats });
       Router.render();
     }
+    if (a === 'revec') {
+      if (!await confirmBox('用当前向量设置重新计算全部记忆')) return;
+      const all = await DB.all('mems');
+      let done = 0;
+      for (const m of all) {
+        Object.assign(m, await Memory.vectorize(m.text));
+        await DB.put('mems', m);
+        if (++done % 10 === 0) toast(`进度 ${done}/${all.length}`, 1500);
+      }
+      Memory._q = { text: null, vec: null };
+      toast(`完成，共 ${all.length} 条`);
+    }
     if (a === 'export') exportData();
     if (a === 'import') $('#imp').click();
   };
@@ -862,6 +878,7 @@ async function boot() {
   S.groups = await DB.all('groups');
   S.rels = (await DB.get('kv', 'rels'))?.value || {};
   S.lastRead = (await DB.get('kv', 'lastRead'))?.value || {};
+  await Log.init();
   await migrate();
   await Life.init();
   await Reading.init();

@@ -30,7 +30,7 @@ const Gen = {
     finally {
       this.busy.delete(convId);
       this.typing(convId, false);
-      Memory.maybeSummarize(convId).catch(e => console.warn('记忆总结失败', e));
+      Memory.maybeSummarize(convId).catch(e => Log.add('记忆总结出错', e.message));
     }
   },
 

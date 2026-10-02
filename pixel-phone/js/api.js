@@ -54,17 +54,21 @@ const API = {
     }
   },
 
-  // OpenAI 兼容的 /embeddings。没填地址返回 null，记忆改用本地匹配
+    // OpenAI 兼容的 /embeddings。没填地址返回 null，记忆改用本地匹配
   async embed(texts) {
     const e = S.settings.embed;
     if (!e.url) return null;
-    const r = await fetch(e.url, {
+    // 只填到 /v1 也行，自动补上 /embeddings（和 SillyTavern 一样）
+    let url = e.url.trim().replace(/\/+$/, '');
+    if (!/\/embeddings$/i.test(url)) url = url.replace(/\/embedding$/i, '') + '/embeddings';
+    const r = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...(e.key ? { Authorization: 'Bearer ' + e.key } : {}) },
-      body: JSON.stringify({ model: e.model, input: texts }),
+      // dimensions 是 OpenAI 兼容参数，百炼 v3/v4、OpenAI 3 系列都支持，不支持的模型留空即可
+      body: JSON.stringify({ model: e.model, input: texts, ...(Number(e.dims) > 0 ? { dimensions: Number(e.dims) } : {}) }),
     });
     const data = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(data.error?.message || 'HTTP ' + r.status);
+    if (!r.ok) throw new Error(data.error?.message || 'HTTP ' + r.status + '（检查接口地址）');
     return data.data.map(d => d.embedding);
   },
 
