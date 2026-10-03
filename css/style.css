@@ -376,3 +376,18 @@ input,textarea,select,.inputbar textarea{font-size:max(16px,var(--fs))}
 .fwd-f { margin-top: 4px; padding-top: 4px; border-top: 1px dashed var(--border); font-size: .8em; opacity: .7; }
 .fwd-all { max-height: 60vh; overflow-y: auto; }
 .fwd-row { padding: 6px 0; border-bottom: 1px dashed var(--border); }
+/* 大富翁操作按钮：一行一个，文字可以换行 */
+#mono-act{grid-template-columns:1fr;gap:6px}
+#mono-act .btn{
+  white-space:normal;      /* 覆盖 .btn 的不换行 */
+  word-break:break-word;
+  line-height:1.4;
+  padding:8px 10px;
+  text-align:center;
+  font-size:calc(var(--fs,15px) * .9);
+}
+/* 结果面板里的按钮保持并排 */
+#mono-act:has(.mono-result){grid-template-columns:1fr 1fr}
+/* ===== 角色：搜索 ===== */
+.char-tools{position:sticky;top:-10px;z-index:5;margin-bottom:0}
+.char-item[hidden],#char-none[hidden]{display:none}

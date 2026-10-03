@@ -65,8 +65,8 @@ const Memory = {
     return v;
   },
 
-  async add(charId, personaId, text, level = 'normal', source = '') {
-    const m = { id: uid(), charId, personaId, text, level, source, ts: Date.now(), ...(await this.vectorize(text)) };
+    async add(charId, personaId, text, level = 'normal', source = '', at = null) {
+    const m = { id: uid(), charId, personaId, text, level, source, ts: Date.now(), ...(at ? { at } : {}), ...(await this.vectorize(text)) };
     await DB.put('mems', m);
     return m;
   },
@@ -107,7 +107,7 @@ const Memory = {
 
   async retrieveText(charId, personaId, query, title = '') {
     const { important, normal } = await this.retrieve(charId, personaId, query);
-    const fmt = m => `- [${new Date(m.ts).toLocaleDateString('zh-CN')}] ${m.text}`;
+        const fmt = m => `- [${new Date(m.at || m.ts).toLocaleDateString('zh-CN')}] ${m.text}`;
     const out = [];
     if (important.length) out.push(`【${title}的重要记忆】\n` + important.map(fmt).join('\n'));
     if (normal.length) out.push(`【${title}的相关回忆】\n` + normal.map(fmt).join('\n'));
@@ -168,7 +168,13 @@ const Memory = {
         await DB.put('kv', st);
         return 0;
       }
-      const log = useful.map(m => Prompt.line(m, info.pid)).join('\n');
+            const hm = ts => new Date(ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
+      const log = useful.map((m, k) => {
+        const day = Prompt.dayText(m.ts);
+        const head = k === 0 || day !== Prompt.dayText(useful[k - 1].ts) ? `（${day}）\n` : '';
+        return `${head}[${hm(m.ts)}] ${Prompt.line(m, info.pid)}`;
+      }).join('\n');
+
       const system = `你是记忆整理助手。阅读一段手机聊天记录（${kind}），分别从 ${names.join('、')} 各自的视角，提炼值得长期记住的信息。
 要求：
 1. 每条记忆是一句完整、独立的陈述，写清楚是谁、做了什么或说了什么，不用指代不明的代词。
@@ -176,7 +182,9 @@ const Memory = {
    - important：关系变化、约定承诺、重要事件、对方的重要个人信息（喜好、经历、身份）、强烈情绪。
    - normal：日常话题、一般细节、闲聊。
 3. 相似内容合并，寒暄忽略。每人 0 到 6 条。
-4. 只输出 JSON，不要其他文字。键名必须是这些名字：${names.join('、')}。格式：{"名字":[{"text":"...","level":"normal"}]}`;
+4. 涉及时间的一律写成具体日期，比如"3月6日约好一起去吃火锅"，不要写"今天""明天""昨天""下周"。
+5. 只输出 JSON，不要其他文字。
+键名必须是这些名字：${names.join('、')}。格式：{"名字":[{"text":"...","level":"normal"}]}`;
       const out = await API.claude(system,
         [{ role: 'user', content: `日期：${new Date(msgs.at(-1).ts).toLocaleDateString('zh-CN')}\n\n${log}` }],
         { temperature: 0.3, maxTokens: Math.min(4000, 600 + 500 * chars.length) });
@@ -192,7 +200,7 @@ const Memory = {
         const arr = Array.isArray(obj) ? (chars.length === 1 ? obj : []) : (obj[c.name] || []);
         for (const it of arr) {
           if (!it?.text) continue;
-          await this.add(c.id, info.pid, it.text, it.level === 'important' ? 'important' : 'normal', convId);
+                    await this.add(c.id, info.pid, it.text, it.level === 'important' ? 'important' : 'normal', convId, msgs.at(-1).ts);
           total++;
         }
       }

@@ -95,12 +95,24 @@ const Prompt = {
       .map(e => this.render(e, vars)).filter(Boolean);
   },
 
-  // 两条消息隔了 3 小时以上，返回一句间隔提示
-  gapNote(prev, m) {
-    if (!prev || m.ts - prev.ts < 3 * 3600e3) return '';
-    const sameDay = new Date(prev.ts).toDateString() === new Date(m.ts).toDateString();
-    return `（过了${gapText(m.ts - prev.ts)}${sameDay ? '' : '，' + new Date(m.ts).toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' })}）`;
+    // 日期文字，比如：3月5日周三
+  dayText(ts) {
+    return new Date(ts).toLocaleDateString('zh-CN', { month: 'long', day: 'numeric', weekday: 'short' });
   },
+
+  // 第一条消息和每次换了一天，都标上日期；同一天隔了 3 小时以上，标上间隔
+  gapNote(prev, m) {
+    const day = this.dayText(m.ts);
+    if (!prev) return `（${day}）`;
+    const d = m.ts - prev.ts;
+    if (day !== this.dayText(prev.ts)) {
+      return `（${day}${d >= 3 * 3600e3 ? '，距上一条过了' + gapText(d) : ''}）`;
+    }
+    return d >= 3 * 3600e3 ? `（过了${gapText(d)}）` : '';
+  },
+
+  // 告诉 AI 怎么换算"今天""明天"
+  TIME_RULE: '（聊天记录里的"今天""明天""昨天"，是按发那条消息的那天说的，要换算成现在的日期。比如昨天说"明天去"，指的就是今天。约好的时间已经过了，就当已经发生了。）',
 
   // 含这些变量的条目每次都会变，放到缓存之后
     DYN_KEYS: ['记忆', 'memory', '近况', '时间', '天气', '世界书触发', '所在地'],
@@ -125,12 +137,14 @@ const Prompt = {
     return out;
   },
   // 开缓存时：system 只放固定部分，动态部分（时间、记忆、近况等）挪到消息末尾，不打断聊天记录的缓存
-  cacheSys(st, dy) {
-    if (!S.settings.cache?.enabled) return { system: this.sysBlocks(st, dy), dyn: '' };
+    cacheSys(st, dy) {
+    // 没开缓存时，换算规则直接放进 system
+    if (!S.settings.cache?.enabled) return { system: this.sysBlocks(st, [...dy, this.TIME_RULE]), dyn: '' };
     const s = st.filter(Boolean).join('\n\n'), d = dy.filter(Boolean).join('\n\n');
     return { system: [{ type: 'text', text: s, cache_control: { type: 'ephemeral' } }], dyn: d };
   },
-  dynText: d => `【当前情况（背景信息，不用复述）】\n${d}`,
+
+   dynText: d => `【当前情况（背景信息，不用复述）】\n${d}\n${Prompt.TIME_RULE}`,
   // 把动态部分放进最后一条 user 消息的开头
   withDyn(msgs, dyn) {
     if (!dyn) return msgs;
@@ -205,7 +219,7 @@ const Prompt = {
     for (const id of ids) {
       if (id === exclude) continue;
       const ms = (await getMsgs(id)).filter(m => m.ts > since).slice(-perConv);
-      for (const m of ms) out.push({ ts: m.ts, t: `[${Conv.label(id, pid)}] ${this.line(m, pid)}` });
+            for (const m of ms) out.push({ ts: m.ts, t: `[${Conv.label(id, pid)} ${ChatUI.timeLabel(m.ts)}] ${this.line(m, pid)}` });
     }
     out.push(...await Moments.contextLines(charId, pid, since));
     out.push(...Pet.contextLines(charId, pid));

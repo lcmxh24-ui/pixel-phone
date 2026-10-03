@@ -149,13 +149,15 @@ const Gen = {
   },
 
   // 按会话类型触发回复
-  reply(convId) {
-    const i = Conv.parse(convId);
-    if (i.type === 'dm') return this.dm(convId);
-    if (i.type === 'g') return this.group(i.gid);
-    if (i.type === 'r') return this.read(i.rid);
-    if (i.type === 'cc') return this.cc(convId);
-  },
+  reply(convId, { regen = false } = {}) {
+  const i = Conv.parse(convId);
+  const hint = regen ? '（这是重新生成，换一种和之前不同的回法）' : '';
+  if (i.type === 'dm') return this.dm(convId, { hint });
+  if (i.type === 'g') return this.group(i.gid, { hint });
+  if (i.type === 'r') return this.read(i.rid);
+  if (i.type === 'cc') return this.cc(convId);
+},
+
 };
 
 // ===== 聊天界面 =====
@@ -481,7 +483,7 @@ async function msgActions(m) {
   if (a === 'regen') await regenerate(m);
 }
 
-// 删掉同一轮生成的消息再重新生成。旧消息没有 batch，就删它之后所有非用户消息
+// 删掉同一轮生成的消息再重新生成
 async function regenerate(m) {
   if (Gen.busy.has(m.convId)) return toast('正在生成中');
   const all = await getMsgs(m.convId);
@@ -489,9 +491,31 @@ async function regenerate(m) {
     ? all.filter(x => x.batch === m.batch)
     : all.slice(all.findIndex(x => x.id === m.id)).filter(x => x.sender !== 'user');
   for (const x of del) await DB.del('msgs', x.id);
+
+  // 被删的消息如果已经总结进记忆，就把那之后的记忆删掉，下次重新总结
+  const since = Math.min(...del.map(x => x.ts));
+  const st = await Memory.state(m.convId);
+  if (st.lastTs >= since) {
+    for (const c of Conv.members(m.convId)) {
+      for (const x of await DB.byIndex('mems', 'charId', c.id)) {
+        if (x.source === m.convId && x.ts >= since) await DB.del('mems', x.id);
+      }
+    }
+    st.lastTs = since - 1;
+    await DB.put('kv', st);
+    Memory._q = { text: null, vec: null };
+  }
+
+  // 这一轮排进队列的"想私聊某人"也撤掉
+  const senders = new Set(del.map(x => x.sender));
+  const intents = await Social.kv('intents', []);
+  await Social.setKv('intents', intents.filter(x => !(senders.has(x.from) && x.due >= since)));
+
   await ChatUI.refresh();
   Gen.reply(m.convId);
 }
+
+
 // ===== 转发聊天记录 =====
 const Forward = {
   // 让转发消息在列表预览、给 AI 的上下文里都能正常显示。启动时调用一次

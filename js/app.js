@@ -399,14 +399,42 @@ Views.chats = async () => {
 };
 
 // ===== 角色管理 =====
+// 搜索词在页面重绘后保留（比如从编辑页返回时）
+const CharUI = { q: '' };
+
 Views.chars = async () => {
   screen().innerHTML = topbar('角色', '<button class="btn ghost" data-act="add" aria-label="新建角色">＋</button>') +
-       `<div class="body list">${S.chars.length ? S.chars.map(c => `<div class="item char-item">
-      <button class="char-head" data-id="${c.id}">${avatar(c.avatar, c.name)}<b class="grow">${esc(c.name)}</b><span>编辑 ▸</span></button>
-      <details class="char-persona"><summary>查看设定</summary>
-        <div class="persona-text">${esc(c.persona || '（未填写设定）')}</div></details>
-    </div>`).join('')
-      : '<p class="empty">点右上角 ＋ 创建第一个角色</p>'}</div>`;
+    `<div class="body list">
+      ${S.chars.length ? `<div class="card char-tools">
+        <input id="char-q" type="search" value="${esc(CharUI.q)}" placeholder="搜索名字或设定" aria-label="搜索角色">
+      </div>` : ''}
+      ${S.chars.length ? S.chars.map(c => `<div class="item char-item" data-search="${esc((c.name + ' ' + (c.persona || '')).toLowerCase())}">
+        <button class="char-head" data-id="${c.id}">${avatar(c.avatar, c.name)}<b class="grow">${esc(c.name)}</b><span>编辑 ▸</span></button>
+        <details class="char-persona"><summary>查看设定</summary>
+          <div class="persona-text">${esc(c.persona || '（未填写设定）')}</div></details>
+      </div>`).join('')
+        : '<p class="empty">点右上角 ＋ 创建第一个角色</p>'}
+      <p class="empty" id="char-none" hidden>没有找到符合的角色</p>
+    </div>`;
+
+  // 只切换显示/隐藏，不重绘页面，输入框不会丢焦点
+  const filter = () => {
+    const terms = CharUI.q.toLowerCase().split(/\s+/).filter(Boolean);
+    const items = $$('.char-item');
+    let shown = 0;
+    for (const it of items) {
+      const ok = terms.every(t => it.dataset.search.includes(t));
+      it.hidden = !ok;
+      if (ok) shown++;
+    }
+    const none = $('#char-none');
+    if (none) none.hidden = !items.length || shown > 0;
+  };
+
+  const q = $('#char-q');
+  if (q) q.oninput = e => { CharUI.q = e.target.value; filter(); };
+  filter();
+
   screen().onclick = async e => {
     if (e.target.closest('[data-act="add"]')) {
       const c = { id: uid(), name: '新角色', avatar: '', persona: '', created: Date.now() };
