@@ -94,7 +94,7 @@ const Pet = {
   },
   // 照顾的规则：主人认真，和你一起养的少一些，帮忙的人只在状态很差时出手
   careRule(p, help) {
-    if (help) return { lim: 15, poop: 4, q: 0.06, doc: 0.02 };
+        if (help) return { lim: 25, poop: 3, q: 0.08, doc: 0.03 };
     const withMe = this.hasPersona(p);
     return withMe ? { lim: 25, poop: 3, q: 0.15, doc: 0.03 } : { lim: 40, poop: 2, q: 0.5, doc: 0.2 };
   },
@@ -311,6 +311,7 @@ const Pet = {
   自己领养：单独一行 ${p}[领养]动物|花色|名字
   想和对方一起养：单独一行 ${p}[一起领养]动物|花色|名字。名字可以空着，让对方起或者之后一起商量。对方同意了才算数。
   给自己参与养的宠物改名（比如商量好了新名字）：单独一行 ${p}[宠物改名]旧名字|新名字
+  照顾宠物：对方让你帮忙照看，或者你自己想帮忙时，单独一行 ${p}[照顾宠物]宠物名字|喂食/铲屎/洗澡/摸摸/看医生。可以照顾自己养的，也可以帮认识的人照顾。一次一个动作，能做到就答应，不用推脱说做不到。
   每人自己最多养 3 只。能养的动物和花色：${sps}`;
   },
 
@@ -464,7 +465,26 @@ const Pet = {
     await this.save();
     return { sender: charId, type: 'sys', content: `${this.who(charId)} 把${SPECIES[p.sp].name}「${old}」改名为「${n}」` };
   },
-
+  // 角色在聊天里照顾宠物：自己参与养的，或者认识的人设养的
+  async charCare(charId, spec, convId) {
+    const [a, b] = String(spec).split(/[|｜]/).map(x => x.trim());
+    const KIND = { 喂: 'feed', 吃: 'feed', 铲: 'clean', 屎: 'clean', 洗: 'bath', 澡: 'bath', 摸: 'pet', 医: 'doctor', 病: 'doctor' };
+    const k = Object.keys(KIND).find(x => (b || a || '').includes(x));
+    if (!k) return null;
+    const pid = Conv.parse(convId).pid;
+    const can = this.list.filter(p => p.owners.includes(charId)
+      || (pid && p.owners.includes('p:' + pid) && knows(pid, charId)));
+    const p = can.find(x => a && a.includes(x.name)) || (can.length === 1 ? can[0] : can.find(x => x.owners.includes('p:' + pid)));
+    if (!p) return null;
+    const before = p.log[0];
+    const msg = await this.act(p, KIND[k], charId);
+    await this.save();
+    this.drawFab();
+    if (this.view === 'pet' && this.curId === p.id) this.updStats?.();
+    // act 成功会写一条动态；没写说明没做成（睡着了、吃饱了之类）
+    const ok = p.log[0] !== before;
+    return { sender: charId, type: 'sys', content: ok ? `${msg}（「${p.name}」）` : `${this.who(charId)}想照顾「${p.name}」，但${msg}` };
+  },
 
   // ===== 绘制 =====
   palette(p) { const s = SPECIES[p.sp]; return { ...PET_C, ...(s.colors[p.color] || s.colors[0]) }; },

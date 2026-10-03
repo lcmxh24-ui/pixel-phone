@@ -169,6 +169,7 @@ Describe what is visible: subject, setting, lighting, colors, mood. No text or w
     if ((m = s.match(/^\[一起领养\]\s*(.+)$/))) return { type: 'petinvite', content: m[1].trim() };
     if ((m = s.match(/^\[领养\]\s*(.+)$/))) return { type: 'adopt', content: m[1].trim() };
     if ((m = s.match(/^\[宠物改名\]\s*(.+)$/))) return { type: 'petrename', content: m[1].trim() };
+    if ((m = s.match(/^\[照顾宠物\]\s*(.+)$/))) return { type: 'petcare', content: m[1].trim() };
     if ((m = s.match(/^\[图片\]\s*(.+)$/) || s.match(/^\[图片(?:#\w+)?[:：]\s*(.+?)\]$/))) return { type: 'photo', content: m[1].trim() };
     if ((m = s.match(/^\[抢红包\]\s*(.*)$/))) return { type: 'grab', content: m[1].trim() };
     if ((m = s.match(/^\[红包\]\s*(.+)$/))) return { type: 'redpacket', content: m[1].trim() };
@@ -213,6 +214,7 @@ Describe what is visible: subject, setting, lighting, colors, mood. No text or w
     if (it.type === 'adopt') return Pet.charAdopt(it.sender, it.content, convId);
     if (it.type === 'petinvite') return Pet.charInvite(it.sender, it.content, convId);
     if (it.type === 'petrename') return Pet.charRename(it.sender, it.content);
+    if (it.type === 'petcare') return Pet.charCare(it.sender, it.content, convId);
     if (it.type === 'moment') return this.chatMoment(it, convId);
     if (it.type === 'avatar') return this.changeAvatar(it.sender, it.content, convId);
     return it;

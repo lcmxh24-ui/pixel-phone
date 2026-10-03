@@ -364,3 +364,15 @@ input,textarea,select,.inputbar textarea{font-size:max(16px,var(--fs))}
 .mono-result{grid-column:1/-1;padding:8px;background:var(--them);border:2px solid var(--border)}
 .mono-result ol{margin:4px 0 0 20px;line-height:1.6}
 
+/* 多选转发 */
+.msg.sel .bubble { outline: 2px dashed var(--accent2); outline-offset: 2px; }
+.selbar { display: flex; align-items: center; gap: 6px; padding: 6px 8px; background: var(--panel); border-top: 2px solid var(--border); }
+.selbar[hidden] { display: none; }
+.selbar span { flex: 1; }
+/* 转发卡片 */
+.fwd { min-width: 180px; }
+.fwd-h { font-weight: bold; margin-bottom: 4px; }
+.fwd-l { opacity: .8; font-size: .9em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fwd-f { margin-top: 4px; padding-top: 4px; border-top: 1px dashed var(--border); font-size: .8em; opacity: .7; }
+.fwd-all { max-height: 60vh; overflow-y: auto; }
+.fwd-row { padding: 6px 0; border-bottom: 1px dashed var(--border); }

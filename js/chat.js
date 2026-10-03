@@ -160,8 +160,16 @@ const Gen = {
 
 // ===== 聊天界面 =====
 const ChatUI = {
-  convId: null,
+    convId: null,
   quoting: null,
+  selecting: null, // 多选转发时是选中的消息 ID 集合，平时为 null
+  // 更新底部"已选 n 条"的条
+  syncSel() {
+    const b = $('#selbar');
+    if (!b) return;
+    b.hidden = !this.selecting;
+    if (this.selecting) $('span', b).textContent = `已选 ${this.selecting.size} 条`;
+  },
   // 输入框上方的引用条，m 为 null 时收起
   setQuote(m) {
     this.quoting = m;
@@ -215,13 +223,14 @@ const ChatUI = {
     const body = m.type === 'voice'
       ? `<button class="voice" data-voice="${m.id}" aria-label="语音消息 ${sec} 秒">▶ ${'▮'.repeat(Math.min(8, Math.ceil(sec / 3)))} ${sec}"</button><div class="vtext">${esc(m.content)}</div>`
            : m.type === 'transfer' || m.type === 'redpacket' ? Wallet.render(m, pid)
-      : m.type === 'petinvite' ? Pet.renderInvite(m)
+            : m.type === 'petinvite' ? Pet.renderInvite(m)
+      : m.type === 'forward' ? Forward.render(m)
       : ['image', 'sticker'].includes(m.type) ? Media.render(m) : this.fmt(m.content, pid);
     // 译文：放在 body 整个表达式结束之后
     const tr = m.trans && S.settings.translate?.show !== false ? `<div class="tr">${esc(m.trans)}</div>` : '';
     const q = m.quote && this.list?.find(x => x.id === m.quote);
     const qt = m.quote ? `<div class="qt" data-jump="${m.quote}">${q ? esc(senderName(q, pid)) + '：' + esc(preview(q, false, pid).slice(0, 40)) : '原消息已删除'}</div>` : '';
-    return sep + `<div class="msg ${mine ? 'me' : 'them'}" data-id="${m.id}">
+        return sep + `<div class="msg ${mine ? 'me' : 'them'}${this.selecting?.has(m.id) ? ' sel' : ''}" data-id="${m.id}">
       ${avatar(who.avatar, who.name)}
       <div class="col">${showName && !mine ? `<div class="sender">${esc(who.name)}</div>` : ''}
                 <div class="bubble${m.keepRaw ? ' raw' : ''}" data-bubble ${m.keepRaw ? 'title="这条在对方看来是原文"' : ''}>${qt}${body}${tr}</div></div></div>`;
@@ -280,8 +289,9 @@ Views.chat = async ({ convId }) => {
   const langBtn = langOpts.length
     ? `<button class="btn ${autoLang ? '' : 'ghost'}" data-act="autolang" aria-pressed="${!!autoLang}" aria-label="我的消息在对方看来的语言">译${autoLang ? '✓' : ''}</button>` : '';
       const offBtn = i.type === 'dm' ? '<button class="btn ghost" data-act="offline" aria-label="查看线下剧情">📍线下</button>' : '';
-  const right = (langBtn || isG || offBtn)
-    ? `<span class="flex" style="gap:4px;flex-wrap:nowrap">${offBtn}${langBtn}${isG ? '<button class="btn ghost" data-act="gset" aria-label="群设置">⚙</button>' : ''}</span>` : '';
+    const ccDelBtn = isCC ? '<button class="btn ghost" data-act="ccclear" aria-label="删除这段私聊">🗑</button>' : '';
+  const right = (langBtn || isG || offBtn || ccDelBtn)
+    ? `<span class="flex" style="gap:4px;flex-wrap:nowrap">${offBtn}${langBtn}${ccDelBtn}${isG ? '<button class="btn ghost" data-act="gset" aria-label="群设置">⚙</button>' : ''}</span>` : '';
   const typingText = isCC ? '他们正在聊…' : isG ? '有人正在输入…' : '对方正在输入…';
     const bottom = isCC
     ? `<div class="peekbar"><span>👀 你在偷看，他们不知道</span><button class="btn" data-act="more">让他们继续聊</button></div>`
@@ -297,12 +307,26 @@ Views.chat = async ({ convId }) => {
   screen().innerHTML = topbar(title, right) +
     `<div class="cv"><div class="cv-msgs" id="msgs"></div>
           <div class="typing" id="typing" ${Gen.busy.has(convId) ? '' : 'hidden'}>${typingText}</div>
-     <div class="quotebar" id="quotebar" hidden><span></span><button class="btn ghost sm" data-act="unquote" aria-label="取消引用">✕</button></div>${bottom}</div>`;
+          <div class="quotebar" id="quotebar" hidden><span></span><button class="btn ghost sm" data-act="unquote" aria-label="取消引用">✕</button></div>
+     <div class="selbar" id="selbar" hidden><span></span>
+       <button class="btn" data-act="fwd">转发</button>
+       <button class="btn ghost" data-act="unsel">取消</button></div>${bottom}</div>`;
   ChatUI.convId = convId;
   ChatUI.quoting = null;
+  ChatUI.selecting = null;
   await ChatUI.refresh();
 
   screen().onclick = async e => {
+    // 多选模式：点消息就是勾选 / 取消
+    if (ChatUI.selecting && !e.target.closest('[data-act]')) {
+      const row = e.target.closest('#msgs [data-id]');
+      if (row) {
+        const id = row.dataset.id;
+        ChatUI.selecting.has(id) ? ChatUI.selecting.delete(id) : ChatUI.selecting.add(id);
+        row.classList.toggle('sel');
+        return ChatUI.syncSel();
+      }
+    }
     const ign = e.target.closest('[data-ign]');
     if (ign) return ign.classList.toggle('open');
 
@@ -320,7 +344,35 @@ Views.chat = async ({ convId }) => {
     if (bub) return msgActions(ChatUI.list.find(x => x.id === bub.closest('[data-id]').dataset.id));
 
     const a = e.target.closest('[data-act]')?.dataset.act;
-    if (a === 'unquote') return ChatUI.setQuote(null);
+       if (a === 'unquote') return ChatUI.setQuote(null);
+    if (a === 'unsel') { ChatUI.selecting = null; ChatUI.syncSel(); return ChatUI.refresh(); }
+    if (a === 'fwd') {
+      const to = await Forward.send(convId, ChatUI.selecting || new Set());
+      if (!to) return;
+      ChatUI.selecting = null;
+      toast('已转发，点「回复」让对方看');
+      const ti = Conv.parse(to);
+      return ti.type === 'g' ? Router.go('group', { gid: ti.gid }) : Router.go('chat', { convId: to });
+    }
+        if (a === 'ccclear') {
+      if (Gen.busy.has(convId)) return toast('他们正在聊，等一下');
+      const k = await actionSheet([
+        { label: '只删聊天记录', value: 'msg', danger: true },
+        { label: '聊天记录和从中总结的记忆一起删', value: 'all', danger: true },
+      ]);
+      if (!k || !await confirmBox('确定删除（删了找不回来）')) return;
+      for (const m of await getMsgs(convId)) await DB.del('msgs', m.id);
+      await DB.del('kv', 'memstate_' + convId); // 总结进度一起重置
+      if (k === 'all') {
+        // 总结时记忆的 source 记的就是会话 ID
+        for (const cid of [i.a, i.b]) {
+          for (const x of await DB.byIndex('mems', 'charId', cid)) if (x.source === convId) await DB.del('mems', x.id);
+        }
+        Memory._q = { text: null, vec: null };
+      }
+      toast('已删除');
+      return Router.back();
+    }
     if (a === 'media') return Media.pick(convId);
     if (a === 'gset') return Router.go('groupEdit', { gid: i.gid });
        if (a === 'offline') return Offline.panel(convId);
@@ -376,7 +428,14 @@ async function msgActions(m) {
   if (await Pet.tapInvite(m)) return;
   const items = [{ label: '复制', value: 'copy' }, { label: '编辑', value: 'edit' }];
   if (Conv.parse(m.convId).type !== 'cc') items.unshift({ label: '引用', value: 'quote' });
-  if (m.trans) items.splice(1, 0, { label: '复制译文', value: 'copytr' });
+    if (m.trans) items.splice(1, 0, { label: '复制译文', value: 'copytr' });
+  // 文字和语音可以改译文，没有译文的可以补一条
+  if (['text', 'voice'].includes(m.type)) items.splice(items.findIndex(x => x.value === 'edit') + 1, 0, { label: m.trans ? '编辑译文' : '添加译文', value: 'edittr' });
+  if (m.type === 'forward') {
+    items.splice(items.findIndex(x => x.value === 'edit'), 1); // 转发卡片不用编辑
+    items.unshift({ label: '查看聊天记录', value: 'fwdview' });
+  }
+  items.push({ label: '多选转发', value: 'select' });
     const ci = Conv.parse(m.convId);
   const lopts = m.sender === 'user' && m.type === 'text' && ['dm', 'g'].includes(ci.type) ? Lang.choices(m.convId, ci.pid) : [];
   if (lopts.length) {
@@ -390,7 +449,21 @@ async function msgActions(m) {
   if (await Media.doAction(a, m)) return;
   if (a === 'quote') return ChatUI.setQuote(m);
   if (a === 'copy') { await navigator.clipboard?.writeText(m.content); toast('已复制'); }
-  if (a === 'copytr') { await navigator.clipboard?.writeText(m.trans); toast('已复制'); }
+    if (a === 'copytr') { await navigator.clipboard?.writeText(m.trans); toast('已复制'); }
+  if (a === 'edittr') {
+    const t = await editText(m.trans ? '编辑译文（清空 = 删除译文）' : '添加译文', m.trans || '');
+    if (t === null) return;
+    if (t.trim()) m.trans = t.trim(); else delete m.trans;
+    await DB.put('msgs', m);
+    ChatUI.refresh();
+  }
+  if (a === 'fwdview') return Forward.view(m);
+  if (a === 'select') {
+    ChatUI.selecting = new Set([m.id]);
+    ChatUI.setQuote(null);
+    await ChatUI.refresh();
+    return ChatUI.syncSel();
+  }
   if (a === 'edit') {
     const t = await editText('编辑消息', m.content);
     if (t?.trim()) { m.content = t.trim(); await DB.put('msgs', m); ChatUI.refresh(); }
@@ -419,6 +492,80 @@ async function regenerate(m) {
   await ChatUI.refresh();
   Gen.reply(m.convId);
 }
+// ===== 转发聊天记录 =====
+const Forward = {
+  // 让转发消息在列表预览、给 AI 的上下文里都能正常显示。启动时调用一次
+  install() {
+    if (Media._fwdPatched) return;
+    const pv = Media.preview, bd = Media.body;
+    Media.preview = function (m, ...r) {
+      return m.type === 'forward' ? `[聊天记录] ${m.title || m.content}` : pv.call(this, m, ...r);
+    };
+    Media.body = function (m, ...r) {
+      return m.type === 'forward' ? Forward.text(m) : bd.call(this, m, ...r);
+    };
+    Media._fwdPatched = true;
+  },
+
+  // 给 AI 看的文字
+  text(m) {
+    const lines = (m.items || []).map(x => `${x.name}：${x.text}`).join('\n');
+    return `[转发的聊天记录：${m.title || '聊天记录'}]\n${lines}\n[聊天记录结束]`;
+  },
+
+  // 气泡里的卡片：标题 + 前三条 + 条数
+  render(m) {
+    const it = m.items || [];
+    return `<div class="fwd"><div class="fwd-h">${esc(m.title || '聊天记录')}</div>
+      ${it.slice(0, 3).map(x => `<div class="fwd-l">${esc(x.name)}：${esc(String(x.text).slice(0, 30))}</div>`).join('')}
+      <div class="fwd-f">共 ${it.length} 条 · 点开查看</div></div>`;
+  },
+
+  // 弹窗看全部
+  view(m) {
+    const { el, mask, close } = modal(`<h3>${esc(m.title || '聊天记录')}</h3>
+      <div class="fwd-all">${(m.items || []).map(x => `<div class="fwd-row">
+        <small>${esc(x.name)} · ${ChatUI.timeLabel(x.ts)}</small>
+        <div>${esc(x.text).replace(/\n/g, '<br>')}</div></div>`).join('')}</div>
+      <button class="btn" data-a="close" style="width:100%;margin-top:8px">关闭</button>`);
+    mask.onclick = e => { if (e.target === mask) close(); };
+    el.onclick = e => { if (e.target.closest('[data-a="close"]')) close(); };
+  },
+
+  // 可以转发到：认识且没被你拉黑的角色私聊、你在里面的群
+  async pickTarget(pid, from) {
+    const opts = [];
+    for (const c of S.chars) {
+      if (!knows(pid, c.id) || getRel(pid, c.id).iBlock) continue;
+      const id = Conv.dm(pid, c.id);
+      if (id !== from) opts.push({ label: '👤 ' + c.name, value: id });
+    }
+    for (const g of S.groups) {
+      if (g.personaId !== pid || g.userIn === false) continue;
+      const id = Conv.g(g.id);
+      if (id !== from) opts.push({ label: '👥 ' + g.name, value: id });
+    }
+    if (!opts.length) { toast('没有可以转发的对象'); return null; }
+    return actionSheet(opts);
+  },
+
+  // 把选中的消息打包发出去，返回目标会话 ID
+  async send(fromConv, ids) {
+    const { pid } = ChatUI.ctx(fromConv);
+    const list = (ChatUI.list || []).filter(m => ids.has(m.id));
+    if (!list.length) { toast('还没选消息'); return null; }
+    const to = await this.pickTarget(pid, fromConv);
+    if (!to) return null;
+    const items = list.map(x => ({
+      name: senderName(x, pid),
+      text: preview(x, false, pid) + (x.trans ? ` [译]${x.trans}` : ''),
+      ts: x.ts,
+    }));
+    const title = Conv.label(fromConv, pid).replace(/的私聊$/, '') + '的聊天记录';
+    await addMsg(to, 'user', title, 'forward', { items, title });
+    return to;
+  },
+};
 
 // ===== 群聊管理 =====
 function memberChecks(selected, pid) {

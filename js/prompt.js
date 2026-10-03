@@ -124,6 +124,21 @@ const Prompt = {
     if (d) out.push({ type: 'text', text: d });
     return out;
   },
+  // 开缓存时：system 只放固定部分，动态部分（时间、记忆、近况等）挪到消息末尾，不打断聊天记录的缓存
+  cacheSys(st, dy) {
+    if (!S.settings.cache?.enabled) return { system: this.sysBlocks(st, dy), dyn: '' };
+    const s = st.filter(Boolean).join('\n\n'), d = dy.filter(Boolean).join('\n\n');
+    return { system: [{ type: 'text', text: s, cache_control: { type: 'ephemeral' } }], dyn: d };
+  },
+  dynText: d => `【当前情况（背景信息，不用复述）】\n${d}`,
+  // 把动态部分放进最后一条 user 消息的开头
+  withDyn(msgs, dyn) {
+    if (!dyn) return msgs;
+    const last = msgs.at(-1);
+    const blocks = typeof last.content === 'string' ? [{ type: 'text', text: last.content }] : last.content;
+    msgs[msgs.length - 1] = { role: 'user', content: [{ type: 'text', text: this.dynText(dyn) }, ...blocks] };
+    return msgs;
+  },
 
   // 分段滑动：攒够半个窗口才整体往前挪，中间前缀不变
   window(all) {
@@ -343,7 +358,7 @@ const Prompt = {
         st.push(this.fill(this.dmRules(known, invGroups, rel.theyBlock, rel.iBlock), vars));
     const lr = Lang.dmRule(ch, p);
     if (lr) st.push(this.fill(lr, vars));
-    const system = this.sysBlocks(st, dy);
+        const { system, dyn } = this.cacheSys(st, dy);
 
         const msgs = [];
     hist.forEach((m, k) => {
@@ -362,7 +377,7 @@ const Prompt = {
       if (c) msgs.splice(Math.max(0, msgs.length - Number(e.depth)), 0, { role: e.role === 'assistant' ? 'assistant' : 'user', content: c });
     });
     if (hint) msgs.push({ role: 'user', content: this.fill(hint, vars) });
-    return { system, messages: this.markCache(this.normalize(msgs)) };
+        return { system, messages: this.withDyn(this.markCache(this.normalize(msgs)), dyn) };
   },
 
      async buildGroup(g, convId, { hint = '', at = null } = {}) {
@@ -403,7 +418,7 @@ ${GroupAdmin.rules(g, members)}`;
     const { st, dy } = this.split('group', vars);
     st.push(this.fill(rules, vars));
     if (g.userIn === false) st.push(this.fill(`【注意】{{用户}}现在不在这个群里（${g.byChar ? '从来没进过' : '已经退出了'}），看不到群消息。上面说的群成员不包括{{用户}}。大家说话不用顾忌{{用户}}，也可以聊到{{用户}}。`, vars));
-    const system = this.sysBlocks(st, dy);
+        const { system, dyn } = this.cacheSys(st, dy);
 
     let i = hist.length;
     while (i > 0 && hist[i - 1].sender === 'user') i--;
@@ -426,45 +441,44 @@ ${GroupAdmin.rules(g, members)}`;
     const content = [];
     if (head) content.push({ type: 'text', text: '【群聊记录】\n' + head, cache_control: { type: 'ephemeral' } });
     const restText = head ? rest : '【群聊记录】\n' + (rest || '（群里还没人说话，由成员自然地开启话题）');
-    content.push({ type: 'text', text: [restText, tail.join('\n')].filter(Boolean).join('\n\n') });
+               // 顺序：聊天记录 → 当前情况（记忆、时间等）→ @提醒和格式提醒
+    content.push({ type: 'text', text: [restText, dyn && this.dynText(dyn), tail.join('\n')].filter(Boolean).join('\n\n') });
     return { system, messages: [{ role: 'user', content }] };
   },
 
-  async buildCC(a, b, convId, { reason = '', at = null } = {}) {
+   async buildCC(a, b, convId, { reason = '', at = null } = {}) {
     const now = at || Date.now();
     const { pid } = Conv.parse(convId);
     const p = persona(pid);
     const hist = (await getMsgs(convId)).slice(-30);
     const query = [reason, ...hist.slice(-6).map(m => m.content)].join('\n');
-    const block = [`你是手机聊天记录的写手，要写出${a.name}和${b.name}在手机上的一段私聊。`];
-    for (const c of [a, b]) {
-      block.push(`【${c.name}的设定】\n${c.persona || '（无）'}`);
+    // 固定部分按 ID 排序，不管谁发起，前缀都一样，才能命中缓存
+    const [x, y] = [a, b].sort((m, n) => (m.id < n.id ? -1 : 1));
+    const st = [`你是手机聊天记录的写手，要写出${x.name}和${y.name}在手机上的一段私聊。`];
+    const dy = [];
+    for (const c of [x, y]) {
+      st.push(`【${c.name}的设定】\n${c.persona || '（无）'}`);
       const r = getRel(pid, c.id);
-      if (r.know) block.push(`${c.name}认识${p.name}${r.desc ? '：' + r.desc : ''}`);
+      if (r.know) st.push(`${c.name}认识${p.name}${r.desc ? '：' + r.desc : ''}`);
       const mem = await Memory.retrieveText(c.id, pid, query, c.name);
-      if (mem) block.push(mem);
+      if (mem) dy.push(mem);
     }
-    if (knows(pid, a.id) || knows(pid, b.id)) block.push(`【${p.name}的设定】\n${p.persona || '（无）'}`);
-    const wb = WB.build([a.id, b.id], WB.scan(hist) + '\n' + reason);
-    if (wb.constant) block.push(`【世界设定】\n${wb.constant}`);
-    if (wb.triggered) block.push(`【相关设定】\n${wb.triggered}`);
-    const place = await Geo.placeText([a, b], pid, now);
-    if (place) block.push('【所在地与时差】\n' + place);
-    const lr = Lang.ccRule(a, b, pid);
-    if (lr) block.push(lr);
-    // 拉黑状态：本人知道，对方只有听说过才知道
-    for (const c of [a, b]) {
+    if (knows(pid, x.id) || knows(pid, y.id)) st.push(`【${p.name}的设定】\n${p.persona || '（无）'}`);
+    const wb = WB.build([x.id, y.id], WB.scan(hist) + '\n' + reason);
+    if (wb.constant) st.push(`【世界设定】\n${wb.constant}`);
+    if (wb.triggered) dy.push(`【相关设定】\n${wb.triggered}`);
+    const lr = Lang.ccRule(x, y, pid);
+    if (lr) st.push(lr);
+    for (const c of [x, y]) {
       const r = getRel(pid, c.id);
-      if (r.iBlock) block.push(`【${c.name}知道】${p.name}把${c.name}拉黑了。对方不一定知道，除非听${c.name}或${p.name}说过。`);
-      if (r.theyBlock) block.push(`【${c.name}知道】${c.name}把${p.name}拉黑了。对方不一定知道，除非听${c.name}或${p.name}说过。`);
+      if (r.iBlock) st.push(`【${c.name}知道】${p.name}把${c.name}拉黑了。对方不一定知道，除非听${c.name}或${p.name}说过。`);
+      if (r.theyBlock) st.push(`【${c.name}知道】${c.name}把${p.name}拉黑了。对方不一定知道，除非听${c.name}或${p.name}说过。`);
     }
-    block.push(`【两人的关系】\n${getRel(a.id, b.id).desc || '认识'}`);
-    const rec = await this.recentMulti([a, b], pid, convId);
-    if (rec) block.push(`【两人最近在别处的聊天】\n${rec}`);
-    block.push(...this.styleBlocks(pid, `${a.name}、${b.name}`));
-            const blockers = [a, b].filter(c => getRel(pid, c.id).theyBlock).map(c => c.name);
-    block.push(`【要求】
-- 只写两人发出的消息，每行一条，格式：名字：内容。名字只能是${a.name}或${b.name}。
+    st.push(`【两人的关系】\n${getRel(x.id, y.id).desc || '认识'}`);
+    st.push(...this.styleBlocks(pid, `${x.name}、${y.name}`));
+    const blockers = [x, y].filter(c => getRel(pid, c.id).theyBlock).map(c => c.name);
+    st.push(`【要求】
+- 只写两人发出的消息，每行一条，格式：名字：内容。名字只能是${x.name}或${y.name}。
 - 像真人聊天：多数是短句，可以连发，偶尔有长消息。不写旁白、动作和心理描写。
 - 注意信息差：每个人只知道自己参与过的聊天和自己的记忆。
 - 一共 4 到 14 条，聊到自然结束或暂时告一段落。
@@ -473,11 +487,17 @@ ${Media.rules(true)}
 ${Quote.RULE}
 - 聊完如果某人想去私下找${p.name}或别人（比如答应帮忙说情、传话），另起一行写：[私聊]名字→对方名字：原因。偶尔使用。${blockers.length ? `
 - ${blockers.join('、')}拉黑了${p.name}。如果被说动了、气消了，单独一行写：名字：[解除拉黑]` : ''}`);
+    const place = await Geo.placeText([x, y], pid, now);
+    if (place) dy.push('【所在地与时差】\n' + place);
+    const rec = await this.recentMulti([x, y], pid, convId);
+    if (rec) dy.push(`【两人最近在别处的聊天】\n${rec}`);
+
+    const { system, dyn } = this.cacheSys(st, dy);
     const log = hist.map((m, k) => (this.gapNote(hist[k - 1], m) ? this.gapNote(hist[k - 1], m) + '\n' : '') + this.line(m, pid, hist)).join('\n');
     const task = `${log ? '【之前的聊天】\n' + log + '\n\n' : ''}现在是${nowText(now)}。${reason
       ? `这次是${a.name}主动找${b.name}，原因：${reason}。`
       : '由其中一人自然地发起话题，可以是日常分享、延续之前的事，或者聊到共同认识的人。'}\n请写出这段私聊。`;
-    return { system: block.join('\n\n'), messages: [{ role: 'user', content: task }] };
+    return { system, messages: this.withDyn([{ role: 'user', content: task }], dyn) };
   },
 
   // 单聊输出：普通消息 / [语音] / [不回] / [不发] / [私聊]

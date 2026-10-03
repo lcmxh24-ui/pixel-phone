@@ -1074,6 +1074,7 @@ async function boot() {
   await API.loadStats();
   await Pet.init();
   await saveSettings();
+    Forward.install();
   applyTheme();
   clock();
   Router.home();
