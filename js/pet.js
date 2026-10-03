@@ -86,6 +86,12 @@ const Pet = {
 },
   save() { return DB.put('kv', { id: 'pets', value: this.list }); },
   get(id) { return this.list.find(p => p.id === id); },
+  // 把 ID 转成名字：'p:人设ID' 是人设，'sys' 是系统记录（不显示名字），其余是角色 ID
+  who(o) {
+    if (!o || o === 'sys') return '';
+    if (String(o).startsWith('p:')) return persona(o.slice(2))?.name || '?';
+    return charById(o)?.name || '?';
+  },
   me: () => 'p:' + activePid(),
   isMine(p) { return p.owners.includes(this.me()); },
   hasPersona: p => p.owners.some(o => o.startsWith('p:')),
