@@ -49,13 +49,13 @@ const Social = {
     await this.setKv('lastProactive', now);
   },
 
-  knownPairs() {
-    const out = [];
-    for (let i = 0; i < S.chars.length; i++) for (let j = i + 1; j < S.chars.length; j++) {
-      if (knows(S.chars[i].id, S.chars[j].id)) out.push([S.chars[i], S.chars[j]]);
-    }
-    return out;
-  },
+  knownPairs(pid) {
+  const out = [];
+  for (let i = 0; i < S.chars.length; i++) for (let j = i + 1; j < S.chars.length; j++) {
+    if (knows(S.chars[i].id, S.chars[j].id, pid)) out.push([S.chars[i], S.chars[j]]);
+  }
+  return out;
+},
 
     // 随机一次主动行为：朋友圈 / 角色建群 / 群里说话 / 角色互聊 / 角色找你。只针对当前人设
   async act(at = null) {
@@ -95,7 +95,7 @@ const Social = {
       if (!last || ref - last.ts > 10 * 60e3) dms.push(c);
     }
     // 两个人里至少有一个会主动，才可能聊起来；由会主动的那个发起
-    const pairs = this.knownPairs().filter(([a, b]) => active(a) || active(b));
+    const pairs = this.knownPairs(pid).filter(([a, b]) => active(a) || active(b));
     if (pairs.length && (Math.random() < Number(p.ccRate) || !dms.length)) {
       const [a, b] = pick(pairs);
       const from = active(a) && active(b) ? null : active(a) ? a.id : b.id;
@@ -116,7 +116,7 @@ const Social = {
     if (knows(pid, fromId) && !getRel(pid, fromId).theyBlock) it = { kind: 'dm' };
     } else {
       const t = S.chars.find(c => c.name === toName);
-      if (t && knows(fromId, t.id)) it = { kind: 'cc', to: t.id };
+     if (t && knows(fromId, t.id, pid)) it = { kind: 'cc', to: t.id };
     }
     if (!it) return;
     const list = await this.kv('intents', []);
@@ -171,7 +171,7 @@ Views.peek = async () => {
       : gRows.length ? '' : '<p class="empty">角色之间还没私聊过。点右上角 ＋ 让两个认识的角色聊聊。</p>'}</div>`;
   screen().onclick = async e => {
     if (e.target.closest('[data-act="new"]')) {
-      const pairs = Social.knownPairs();
+      const pairs = Social.knownPairs(pid);
       if (!pairs.length) return toast('还没有互相认识的角色，去「关系网」设置');
       const pr = await actionSheet(pairs.map(([a, b]) => ({ label: `${a.name} & ${b.name}`, value: [a.id, b.id] })));
       if (!pr) return;

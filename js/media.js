@@ -198,7 +198,7 @@ Describe what is visible: subject, setting, lighting, colors, mood. No text or w
       const { style, desc } = this.parseStyle(it.content);
       // 宠物截图：直接用宠物的点阵画，不走生图
       if (style === '宠物截图') {
-        const pet = Pet.findForShot(it.sender, desc);
+        const pet = Pet.findForShot(it.sender, desc, Conv.parse(convId).pid);
         if (pet) {
           const label = `（宠物截图）${Pet.petLabel(pet)}${desc && desc !== pet.name ? '，' + desc : ''}`;
           return { sender: it.sender, type: 'image', content: label, extra: { url: Pet.snapshot(pet), desc: label, gen: true, style } };
@@ -214,7 +214,7 @@ Describe what is visible: subject, setting, lighting, colors, mood. No text or w
     }
     if (it.type === 'adopt') return Pet.charAdopt(it.sender, it.content, convId);
     if (it.type === 'petinvite') return Pet.charInvite(it.sender, it.content, convId);
-    if (it.type === 'petrename') return Pet.charRename(it.sender, it.content);
+    if (it.type === 'petrename') return Pet.charRename(it.sender, it.content, convId);
     if (it.type === 'petcare') return Pet.charCare(it.sender, it.content, convId);
     if (it.type === 'petvisit') return Pet.charVisit(it.sender, it.content, convId);
     if (it.type === 'moment') return this.chatMoment(it, convId);

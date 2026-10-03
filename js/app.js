@@ -177,14 +177,22 @@ const Conv = {
 };
 
 // ===== 关系网 =====
-// 键为两个 ID 排序后拼接。人设-角色默认认识，角色-角色默认不认识
-const relKey = (a, b) => [a, b].sort().join('|');
-function getRel(a, b) {
-  return S.rels[relKey(a, b)] || { know: isPersona(a) || isPersona(b), desc: '' };
+// 人设-角色：键为两个 ID 排序后拼接，天然按人设区分
+// 角色-角色：键前面加上人设 ID，每个人设各一份；没有时回落到旧版共用的键
+const relKey = (a, b, pid) => {
+  const k = [a, b].sort().join('|');
+  return isPersona(a) || isPersona(b) ? k : `${pid}#${k}`;
+};
+const legacyKey = (a, b) => [a, b].sort().join('|');
+
+function getRel(a, b, pid = activePid()) {
+  return S.rels[relKey(a, b, pid)]
+    || (!isPersona(a) && !isPersona(b) && S.rels[legacyKey(a, b)])
+    || { know: isPersona(a) || isPersona(b), desc: '' };
 }
-const knows = (a, b) => a !== b && getRel(a, b).know;
-async function setRel(a, b, patch) {
-  S.rels[relKey(a, b)] = { ...getRel(a, b), ...patch };
+const knows = (a, b, pid) => a !== b && getRel(a, b, pid).know;
+async function setRel(a, b, patch, pid = activePid()) {
+  S.rels[relKey(a, b, pid)] = { ...getRel(a, b, pid), ...patch };
   await DB.put('kv', { id: 'rels', value: S.rels });
 }
 
@@ -546,8 +554,8 @@ Views.mems = async ({ charId }) => {
 const RelUI = { q: '', show: 'all' };
 
 // 批量写关系，只存一次数据库
-async function setRels(pairs, patch) {
-  for (const [a, b] of pairs) S.rels[relKey(a, b)] = { ...getRel(a, b), ...patch };
+async function setRels(pairs, patch, pid = activePid()) {
+  for (const [a, b] of pairs) S.rels[relKey(a, b, pid)] = { ...getRel(a, b, pid), ...patch };
   await DB.put('kv', { id: 'rels', value: S.rels });
 }
 
@@ -590,7 +598,7 @@ Views.rels = async () => {
     </div>
     <div data-sec>
       <h3>角色之间</h3>
-      <p class="empty">所有人设共用。只有认识的两个人才会私聊。</p>
+      <p class="empty">只对当前人设生效。只有认识的两个人才会私聊。</p>
       ${pairs.map(([a, b]) => row(a.id, b.id, `${a.name} ↔ ${b.name}`, [a.name, b.name])).join('') || '<p class="empty">至少要两个角色</p>'}
     </div>
     <p class="empty" id="rel-none" hidden>没有符合条件的关系</p>

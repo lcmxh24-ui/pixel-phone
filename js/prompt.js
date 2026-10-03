@@ -218,10 +218,10 @@ const Prompt = {
     return all.sort((a, b) => a.ts - b.ts).slice(-max).map(x => x.t).join('\n');
   },
 
-  knownList(charId) {
-    return S.chars.filter(c => c.id !== charId && knows(charId, c.id))
-      .map(c => { const d = getRel(charId, c.id).desc; return d ? `${c.name}（${d}）` : c.name; }).join('、');
-  },
+  knownList(charId, pid) {
+  return S.chars.filter(c => c.id !== charId && knows(charId, c.id, pid))
+    .map(c => { const d = getRel(charId, c.id, pid).desc; return d ? `${c.name}（${d}）` : c.name; }).join('、');
+},
 
   relationsText(members, pid) {
     const p = persona(pid), lines = [];
@@ -230,9 +230,9 @@ const Prompt = {
       lines.push(`${c.name}和${p.name}：${r.know ? '认识' : '不认识'}${r.desc ? '，' + r.desc : ''}`);
     }
     for (let i = 0; i < members.length; i++) for (let j = i + 1; j < members.length; j++) {
-      const r = getRel(members[i].id, members[j].id);
-      lines.push(`${members[i].name}和${members[j].name}：${r.know ? '认识' : '不认识'}${r.desc ? '，' + r.desc : ''}`);
-    }
+  const r = getRel(members[i].id, members[j].id, pid);
+  lines.push(`${members[i].name}和${members[j].name}：${r.know ? '认识' : '不认识'}${r.desc ? '，' + r.desc : ''}`);
+}
     return lines.join('\n');
   },
 
@@ -335,7 +335,7 @@ const Prompt = {
     const hist = this.window(all);
     const query = hist.slice(-6).map(m => m.content).join('\n') || hint;
     const rel = getRel(pid, ch.id);
-    const known = this.knownList(ch.id);
+    const known = this.knownList(ch.id, pid);
     const wb = WB.build([ch.id], WB.scan(all) + '\n' + hint);
     const vars = {
       ...this.baseVars(pid, now),
@@ -474,7 +474,7 @@ ${GroupAdmin.rules(g, members)}`;
       if (r.iBlock) st.push(`【${c.name}知道】${p.name}把${c.name}拉黑了。对方不一定知道，除非听${c.name}或${p.name}说过。`);
       if (r.theyBlock) st.push(`【${c.name}知道】${c.name}把${p.name}拉黑了。对方不一定知道，除非听${c.name}或${p.name}说过。`);
     }
-    st.push(`【两人的关系】\n${getRel(x.id, y.id).desc || '认识'}`);
+    st.push(`【两人的关系】\n${getRel(x.id, y.id, pid).desc || '认识'}`);
     st.push(...this.styleBlocks(pid, `${x.name}、${y.name}`));
     const blockers = [x, y].filter(c => getRel(pid, c.id).theyBlock).map(c => c.name);
     st.push(`【要求】

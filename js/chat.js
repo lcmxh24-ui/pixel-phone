@@ -780,9 +780,10 @@ const GroupAdmin = {
   CMD: /^\[(改群名|换群头像|拉人|踢人|设管理|撤管理|转让群主)\]\s*(.*)$/,
   parse(s) { const m = String(s).trim().match(this.CMD); return m ? { k: m[1], arg: m[2].trim() } : null; },
   // 不在群里、而且被 id 认识的角色
-  invitable(g, id) {
-    return S.chars.filter(c => !g.members.includes(c.id) && (id === 'user' ? knows(g.personaId, c.id) : knows(id, c.id)));
-  },
+ invitable(g, id) {
+  return S.chars.filter(c => !g.members.includes(c.id)
+    && (id === 'user' ? knows(g.personaId, c.id) : knows(id, c.id, g.personaId)));
+},
 
   // 执行一个群操作。成功返回系统提示文字，不允许就返回 null
   async apply(convId, actor, { k, arg }) {
@@ -882,7 +883,7 @@ const GroupAdmin = {
     if (!o || !S.settings.claude.key) return false;
     const pid = g.personaId, pname = persona(pid).name;
     const others = g.members.filter(id => id !== o.id).map(charById).filter(Boolean);
-    const rel = c => getRel(o.id, c.id).desc || (knows(o.id, c.id) ? '认识' : '不熟');
+    const rel = c => getRel(o.id, c.id, pid).desc || (knows(o.id, c.id, pid) ? '认识' : '不熟');
     const wb = WB.build([o.id, ...g.members], '');
     const system = [
       `你在扮演${o.name}。${o.name}刚建了一个手机群聊，要给群起名字。`,
@@ -947,7 +948,7 @@ ${o.persona || '（无）'}
   // 角色自己建群（没有你）。每个人设最多 3 个，至少拉两个人
   async charCreate(pid, at = null) {
     if (S.groups.filter(g => g.personaId === pid && g.byChar).length >= 3) return null;
-    const knownOf = c => S.chars.filter(o => o.id !== c.id && knows(c.id, o.id));
+    const knownOf = c => S.chars.filter(o => o.id !== c.id && knows(c.id, o.id, pid));
     const cands = S.chars.filter(c => c.proactive !== false && knownOf(c).length >= 2);
     if (!cands.length) return null;
     const o = pick(cands), known = knownOf(o);
@@ -956,7 +957,7 @@ ${o.persona || '（无）'}
     const system = [
       `你在扮演${o.name}，判断${o.name}此刻会不会建一个手机群聊。`,
       `【${o.name}的设定】\n${o.persona || '（无）'}`,
-      `【${o.name}认识的人】\n${known.map(c => `${c.name}（${getRel(o.id, c.id).desc || '认识'}）`).join('\n')}`,
+     `【${o.name}认识的人】\n${known.map(c => `${c.name}（${getRel(o.id, c.id, pid).desc || '认识'}）`).join('\n')}`,
       mine.length && `【${o.name}已经在的群】\n${mine.join('\n')}`,
       `【要求】
 - 真人建群需要理由：一起做某件事、组织活动、几个朋友的小圈子、吐槽某人等。没有理由就别建，已经有差不多的群也别建。
