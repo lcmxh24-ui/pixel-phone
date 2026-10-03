@@ -310,8 +310,9 @@ Views.chat = async ({ convId }) => {
     `<div class="cv"><div class="cv-msgs" id="msgs"></div>
           <div class="typing" id="typing" ${Gen.busy.has(convId) ? '' : 'hidden'}>${typingText}</div>
           <div class="quotebar" id="quotebar" hidden><span></span><button class="btn ghost sm" data-act="unquote" aria-label="取消引用">✕</button></div>
-     <div class="selbar" id="selbar" hidden><span></span>
+          <div class="selbar" id="selbar" hidden><span></span>
        <button class="btn" data-act="fwd">转发</button>
+       <button class="btn danger" data-act="seldel">删除</button>
        <button class="btn ghost" data-act="unsel">取消</button></div>${bottom}</div>`;
   ChatUI.convId = convId;
   ChatUI.quoting = null;
@@ -356,6 +357,19 @@ Views.chat = async ({ convId }) => {
       const ti = Conv.parse(to);
       return ti.type === 'g' ? Router.go('group', { gid: ti.gid }) : Router.go('chat', { convId: to });
     }
+    if (a === 'seldel') {
+      const ids = ChatUI.selecting || new Set();
+      if (!ids.size) return toast('还没选消息');
+      if (Gen.busy.has(convId)) return toast('正在生成中，等一下再删');
+      if (!await confirmBox(`删除选中的 ${ids.size} 条消息（删了找不回来）`)) return;
+      for (const id of ids) await DB.del('msgs', id);
+      const n = ids.size;
+      ChatUI.selecting = null;
+      ChatUI.syncSel();
+      await ChatUI.refresh();
+      return toast(`已删除 ${n} 条`);
+    }
+
         if (a === 'ccclear') {
       if (Gen.busy.has(convId)) return toast('他们正在聊，等一下');
       const k = await actionSheet([
@@ -437,7 +451,7 @@ async function msgActions(m) {
     items.splice(items.findIndex(x => x.value === 'edit'), 1); // 转发卡片不用编辑
     items.unshift({ label: '查看聊天记录', value: 'fwdview' });
   }
-  items.push({ label: '多选转发', value: 'select' });
+   items.push({ label: '多选（转发 / 删除）', value: 'select' });
     const ci = Conv.parse(m.convId);
   const lopts = m.sender === 'user' && m.type === 'text' && ['dm', 'g'].includes(ci.type) ? Lang.choices(m.convId, ci.pid) : [];
   if (lopts.length) {
