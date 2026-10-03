@@ -5,10 +5,8 @@ Views.health = async () => {
 
   const mems = (await DB.all('mems')).filter(m => m.personaId === pid);
   const useApi = !!S.settings.embed.url;
-  let curDim = null, embErr = '';
-  if (useApi) {
-    try { curDim = (await Memory.apiEmbed('体检'))?.length || null; } catch (e) { embErr = e.message; }
-  }
+    // 不自动测，点「测试连接」才测，结果在这次打开页面期间保留
+  const curDim = Views.health._dim || null, embErr = Views.health._err || '';
   // 配了接口时：本地向量、接口失败的、维度不符的都算需要修复
   const needFix = m => useApi && (m.vecType !== 'api' || m.vecErr || (curDim && m.vec?.length !== curDim));
   const bad = mems.filter(needFix);
@@ -28,10 +26,12 @@ Views.health = async () => {
   } catch { /* 部分浏览器不支持 */ }
 
   screen().innerHTML = topbar('记忆体检') + `<div class="body">
-    <h3>向量接口</h3><div class="card">
+        <h3>向量接口</h3><div class="card">
       ${!useApi ? '<p>未配置，全部使用本地匹配。</p>'
-        : embErr ? `<p>❌ 当前连不上：${esc(embErr)}</p><p class="empty">连不上时召回会自动改用本地匹配，不会完全失效。</p>`
-        : `<p>✅ 正常，当前维度 ${curDim}</p>`}
+        : embErr ? `<p>❌ 连不上：${esc(embErr)}</p><p class="empty">连不上时召回会自动改用本地匹配，不会完全失效。</p>`
+        : curDim ? `<p>✅ 正常，当前维度 ${curDim}</p>`
+        : '<p class="empty">还没测试。点下面的按钮检查连接和维度。</p>'}
+      ${useApi ? '<button class="btn ghost" data-act="ping">测试连接</button>' : ''}
     </div>
 
     <h3>记忆（${esc(persona(pid).name)}）</h3><div class="card">
@@ -70,6 +70,13 @@ Views.health = async () => {
     const a = e.target.closest('[data-act]')?.dataset.act;
     if (!a || running) return;
     if (a === 'clear') { await Log.clear(); return Router.render(); }
+    if (a === 'ping') {
+      toast('测试中…');
+      Views.health._dim = null; Views.health._err = '';
+      try { Views.health._dim = (await Memory.apiEmbed('体检'))?.length || null; }
+      catch (err) { Views.health._err = err.message; }
+      return Router.render();
+    }
     running = true;
     try {
       if (a === 'fix') {

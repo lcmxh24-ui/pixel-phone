@@ -293,11 +293,13 @@ const Prompt = {
     }).join('\n');
     // 其他在场的人最近 24 小时的聊天，让他们的表现能接上
     const rec = multi ? await this.recentMulti(chars.slice(1), pid, convId) : '';
+        const pname = persona(pid).name;
     const task = [
-      log && `【${persona(pid).name}和${names[0]}的线上聊天记录】\n` + log,
+      log && `【${pname}和${names[0]}的线上聊天记录】\n` + log,
       rec && '【其他在场的人最近的聊天】\n' + rec,
-      multi && `【在场的人】${persona(pid).name}、${names.join('、')}。每个人都要有符合自己性格的表现，戏份不用一样多。`,
+      multi && `【在场的人】${pname}、${names.join('、')}。每个人都要有符合自己性格的表现，戏份不用一样多。`,
       hint && '【这段剧情大概是】\n' + hint,
+      `【剧情里的手机消息】如果剧情里有人用手机给${pname}发了消息（比如见面前说"我到了"、分开后报平安），每条单独一行写：[消息]时:分 名字：内容。时间是今天的具体时间，不能晚于${ChatUI.timeLabel(Date.now())}。名字只能是${names.join('、')}，不替${pname}发消息。语音写成 [消息]时:分 名字：[语音]内容。没有就不写，正文里也不要重复这些消息。`,
       `请写出${nowText(ts)}发生的线下剧情。`,
     ].filter(Boolean).join('\n\n');
     return { system, messages: [{ role: 'user', content: task }] };

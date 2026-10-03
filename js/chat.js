@@ -240,9 +240,10 @@ const ChatUI = {
     const box = $('#msgs');
     if (!box || !this.convId) return;
     const { i, pid, meId, showName } = this.ctx(this.convId);
-    const list = await getMsgs(this.convId);
+       const list = await getMsgs(this.convId);
     this.list = list;
-    box.innerHTML = list.map((m, k) => this.html(m, pid, meId, showName, list[k - 1]?.ts)).join('')
+    const shown = list.filter(m => m.type !== 'offline');
+    box.innerHTML = shown.map((m, k) => this.html(m, pid, meId, showName, shown[k - 1]?.ts)).join('')
       || `<p class="empty">${i.type === 'cc' ? '他们还没聊过' : '打个招呼吧'}</p>`;
     box.scrollTop = box.scrollHeight;
     if (i.type !== 'cc') await markRead(this.convId);
@@ -278,7 +279,7 @@ Views.chat = async ({ convId }) => {
   if (!langOpts.includes(autoLang)) autoLang = '';
   const langBtn = langOpts.length
     ? `<button class="btn ${autoLang ? '' : 'ghost'}" data-act="autolang" aria-pressed="${!!autoLang}" aria-label="我的消息在对方看来的语言">译${autoLang ? '✓' : ''}</button>` : '';
-    const offBtn = i.type === 'dm' ? '<button class="btn ghost" data-act="offline" aria-label="线下剧情">线下</button>' : '';
+      const offBtn = i.type === 'dm' ? '<button class="btn ghost" data-act="offline" aria-label="查看线下剧情">📍线下</button>' : '';
   const right = (langBtn || isG || offBtn)
     ? `<span class="flex" style="gap:4px;flex-wrap:nowrap">${offBtn}${langBtn}${isG ? '<button class="btn ghost" data-act="gset" aria-label="群设置">⚙</button>' : ''}</span>` : '';
   const typingText = isCC ? '他们正在聊…' : isG ? '有人正在输入…' : '对方正在输入…';
@@ -322,7 +323,7 @@ Views.chat = async ({ convId }) => {
     if (a === 'unquote') return ChatUI.setQuote(null);
     if (a === 'media') return Media.pick(convId);
     if (a === 'gset') return Router.go('groupEdit', { gid: i.gid });
-    if (a === 'offline') return Offline.open(convId);
+       if (a === 'offline') return Offline.panel(convId);
        if (a === 'autolang') {
       let next = '';
       if (!isG && langOpts.length === 1) next = autoLang ? '' : langOpts[0];
@@ -371,7 +372,6 @@ Views.peekView = p => Views.chat(p);
 
 async function msgActions(m) {
   if (!m) return;
-  if (m.type === 'offline') return Offline.actions(m);
   if (await Wallet.tap(m)) return;
   if (await Pet.tapInvite(m)) return;
   const items = [{ label: '复制', value: 'copy' }, { label: '编辑', value: 'edit' }];
@@ -843,7 +843,7 @@ const Offline = {
     const others = S.chars.filter(c => c.id !== main.id);
     const d = new Date();
     const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-    const tip = { ai: '剧情方向（可以留空，AI 会参考聊天记录）', me: '发生了什么' };
+        const tip = { ai: '剧情方向（可以留空，AI 会参考聊天记录）', me: '发生了什么（可以加手机消息：[消息]14:30 名字：内容，自己发的写 我）' };
     const { el, close } = modal(`<h3>线下 · 和${esc(main.name)}</h3>
       <label class="field"><span>今天几点发生的</span><input type="time" id="off-t" value="${hm}"></label>
       <div class="field"><span>还有谁在场（可多选，不选就是只有你们俩）</span>
@@ -907,26 +907,7 @@ const Offline = {
       this.gen(convId, ids.map(charById).filter(Boolean), ts, text);
     };
   },
-
-  // 每个在场角色的私聊里各放一份，scene 相同。memDone 表示记忆已单独写过，普通总结会跳过
-  async save(convId, sender, content, ts, by, ids) {
-    const pid = Conv.parse(convId).pid, scene = uid();
-    const extra = { ts, savedAt: Date.now(), by, members: ids, scene, memDone: true };
-    for (const id of ids) await addMsg(Conv.dm(pid, id), sender, content, 'offline', extra);
-    this.remember(pid, ids, content, ts, scene).catch(e => Log.add('线下剧情写入记忆失败', e.message));
-  },
-
-  gen(convId, chars, ts, hint) {
-    if (Gen.busy.has(convId)) return toast('正在生成中');
-    toast('正在写线下剧情…', 3000);
-    return Gen.run(convId, null, async () => {
-      const { system, messages } = await Prompt.buildOffline(chars, convId, ts, hint);
-      const text = await API.claude(system, messages, { maxTokens: 1500 + 300 * (chars.length - 1) });
-      if (!text) throw new Error('AI 没有写出线下剧情');
-      await this.save(convId, chars[0].id, text, ts, 'ai', chars.map(c => c.id));
-    });
-  },
-
+ 
   // 一次调用给所有在场角色写记忆，记忆来源标上 scene，方便之后一起改、一起删
   async remember(pid, ids, text, ts, scene) {
     const chars = ids.map(charById).filter(Boolean);
@@ -947,12 +928,63 @@ const Offline = {
       }
     }
   },
+  // 拆出正文和 [消息]时:分 名字：内容。名字是"我"或你的人设名时算你发的，放进当前私聊
+  parseOut(text, ids, pid, ts) {
+    const pname = persona(pid).name, chars = ids.map(charById).filter(Boolean), names = chars.map(c => c.name);
+    const story = [], msgs = [];
+    for (const l of String(text).split('\n')) {
+      const m = l.trim().match(/^\[消息\]\s*(\d{1,2})\s*[:：]\s*(\d{2})\s*(.+?)\s*[:：]\s*(.+)$/);
+      if (!m) { story.push(l); continue; }
+      const who = m[3].trim(), isMe = who === '我' || who === pname;
+      const cn = isMe ? null : Prompt.matchName(names, who);
+      if (!isMe && !cn) { story.push(l); continue; }
+      // 消息时间：剧情那天的这个时刻，不合理就用剧情时间
+      let t = new Date(ts).setHours(Number(m[1]), Number(m[2]), 0, 0);
+      if (isNaN(t) || t > Date.now()) t = ts;
+      const c = cn && chars.find(x => x.name === cn);
+      const it = Media.parseItem(m[4]);
+      msgs.push({
+        conv: Conv.dm(pid, c ? c.id : ids[0]), sender: c ? c.id : 'user', name: c ? c.name : pname,
+        type: it.type === 'voice' ? 'voice' : 'text', content: it.type === 'voice' ? it.content : m[4].trim(), ts: t,
+      });
+    }
+    // 同一分钟的几条错开 1 毫秒，保证顺序
+    msgs.sort((a, b) => a.ts - b.ts).forEach((x, k) => { x.ts += k; });
+    return { story: story.join('\n').replace(/\n{3,}/g, '\n\n').trim(), msgs };
+  },
 
-  // 同一段剧情在所有人私聊里的副本
-  async copies(m) {
+  // 剧情每个在场角色各存一份（scene 相同），手机消息按剧情时间插进私聊（sceneOf 指向剧情）
+  async save(convId, sender, raw, ts, by, ids) {
+    const pid = Conv.parse(convId).pid, scene = uid(), now = Date.now();
+    const { story, msgs } = this.parseOut(raw, ids, pid, ts);
+    if (!story && !msgs.length) return toast('没有内容');
+    const text = story || '（只有手机消息）';
+    const extra = { ts, savedAt: now, by, members: ids, scene, memDone: true };
+    for (const id of ids) await addMsg(Conv.dm(pid, id), sender, text, 'offline', extra);
+    for (const x of msgs) await addMsg(x.conv, x.sender, x.content, x.type, { ts: x.ts, savedAt: now, sceneOf: scene, memDone: true });
+    const memText = text + (msgs.length ? '\n\n【当时的手机消息】\n' + msgs.map(x => `${ChatUI.timeLabel(x.ts)} ${x.name}：${x.content}`).join('\n') : '');
+    this.remember(pid, ids, memText, ts, scene).catch(e => Log.add('线下剧情写入记忆失败', e.message));
+    toast(msgs.length ? `线下剧情已保存，带了 ${msgs.length} 条消息。点右上角 📍 查看` : '线下剧情已保存，点右上角 📍 查看', 3000);
+  },
+
+  gen(convId, chars, ts, hint) {
+    if (Gen.busy.has(convId)) return toast('正在生成中');
+    toast('正在写线下剧情…', 3000);
+    return Gen.run(convId, null, async () => {
+      const { system, messages } = await Prompt.buildOffline(chars, convId, ts, hint);
+      const text = await API.claude(system, messages, { maxTokens: 1500 + 300 * (chars.length - 1) });
+      if (!text) throw new Error('AI 没有写出线下剧情');
+      await this.save(convId, chars[0].id, text, ts, 'ai', chars.map(c => c.id));
+    });
+  },
+
+  // 同一段剧情相关的所有东西：每个人那里的剧情副本 + 剧情里的手机消息
+  async related(m) {
     if (!m.scene) return [m];
     const pid = Conv.parse(m.convId).pid, out = [];
-    for (const id of m.members || []) out.push(...(await getMsgs(Conv.dm(pid, id))).filter(x => x.scene === m.scene));
+    for (const id of m.members || []) {
+      out.push(...(await getMsgs(Conv.dm(pid, id))).filter(x => x.scene === m.scene || x.sceneOf === m.scene));
+    }
     return out;
   },
   async forget(m) {
@@ -961,30 +993,65 @@ const Offline = {
       for (const x of await DB.byIndex('mems', 'charId', id)) if (x.source === 'offline:' + m.scene) await DB.del('mems', x.id);
     }
   },
+  async edit(m) {
+    const t = (await editText('编辑线下剧情', m.content))?.trim();
+    if (!t) return false;
+    for (const x of (await this.related(m)).filter(x => x.type === 'offline')) { x.content = t; await DB.put('msgs', x); }
+    await this.forget(m);
+    if (m.scene) this.remember(Conv.parse(m.convId).pid, m.members, t, m.ts, m.scene).catch(e => Log.add('线下剧情写入记忆失败', e.message));
+    return true;
+  },
+  async del(m) {
+    for (const x of await this.related(m)) await DB.del('msgs', x.id);
+    await this.forget(m);
+  },
 
-  async actions(m) {
-    const multi = (m.members || []).length > 1;
-    const a = await actionSheet([
-      { label: '复制', value: 'copy' },
-      { label: multi ? '编辑（所有人那里一起改）' : '编辑', value: 'edit' },
-      { label: multi ? '删除（所有人那里一起删）' : '删除', value: 'del', danger: true },
-    ]);
-    if (a === 'copy') { await navigator.clipboard?.writeText(m.content); toast('已复制'); }
-    if (a === 'edit') {
-      const t = (await editText('编辑线下剧情', m.content))?.trim();
-      if (!t) return;
-      for (const x of await this.copies(m)) { x.content = t; await DB.put('msgs', x); }
-      // 记忆跟着重写
-      await this.forget(m);
-      if (m.scene) this.remember(Conv.parse(m.convId).pid, m.members, t, m.ts, m.scene).catch(e => Log.add('线下剧情写入记忆失败', e.message));
-      ChatUI.refresh();
-    }
-    if (a === 'del') {
-      if (!await confirmBox('删除这段线下剧情（相关记忆一起删除）')) return;
-      for (const x of await this.copies(m)) await DB.del('msgs', x.id);
-      await this.forget(m);
-      ChatUI.refresh();
-    }
+  // 悬浮面板：一条一条缩略显示，点开看全文
+  async panel(convId) {
+    const ch = charById(Conv.parse(convId).charId);
+    if (!ch) return;
+    const list = (await getMsgs(convId)).filter(m => m.type === 'offline').reverse();
+    const names = m => (m.members || []).map(id => charById(id)?.name).filter(Boolean);
+    const { el, mask, close } = modal(`<h3>📍 和${esc(ch.name)}的线下</h3>
+      <button class="btn" data-a="new" style="width:100%">＋ 新的线下剧情</button>
+      <div class="off-panel">${list.map(m => `<div class="off-item" data-id="${m.id}">
+        <button class="off-sum" data-a="open" aria-expanded="false">
+          <span class="off-time">${ChatUI.timeLabel(m.ts)}${names(m).length > 1 ? ' · ' + esc(names(m).join('、')) : ''}${m.by === 'user' ? ' · 我写的' : ''}</span>
+          <span class="ellipsis">${esc(m.content.replace(/\s+/g, ' ').slice(0, 40))}</span></button>
+        <div class="off-full" hidden>${esc(m.content).replace(/\n/g, '<br>')}
+          <div class="flex" style="justify-content:flex-end;gap:6px;margin-top:8px">
+            <button class="btn ghost sm" data-a="copy">复制</button>
+            <button class="btn ghost sm" data-a="edit">编辑</button>
+            <button class="btn danger sm" data-a="del">删除</button></div></div>
+      </div>`).join('') || '<p class="empty">还没有线下剧情</p>'}</div>
+      <button class="btn ghost" data-a="close" style="width:100%;margin-top:8px">关闭</button>`);
+    mask.onclick = e => { if (e.target === mask) close(); };
+    el.onclick = async e => {
+      const btn = e.target.closest('[data-a]'), a = btn?.dataset.a;
+      if (!a) return;
+      if (a === 'close') return close();
+      if (a === 'new') { close(); return this.open(convId); }
+      const item = btn.closest('[data-id]'), m = list.find(x => x.id === item?.dataset.id);
+      if (!m) return;
+      if (a === 'open') {
+        const f = $('.off-full', item);
+        f.hidden = !f.hidden;
+        btn.setAttribute('aria-expanded', String(!f.hidden));
+        return;
+      }
+      if (a === 'copy') { await navigator.clipboard?.writeText(m.content); return toast('已复制'); }
+      // 编辑和确认框会占用弹窗，操作完再把面板打开
+      if (a === 'edit') { if (await this.edit(m)) toast('已修改'); return this.panel(convId); }
+      if (a === 'del') {
+        const n = (await this.related(m)).filter(x => x.type !== 'offline').length;
+        if (await confirmBox(`删除这段线下剧情${n ? `和其中的 ${n} 条消息` : ''}（相关记忆一起删除）`)) {
+          await this.del(m);
+          ChatUI.refresh();
+          toast('已删除');
+        }
+        return this.panel(convId);
+      }
+    };
   },
 };
 
