@@ -1,5 +1,8 @@
 // 图片类型 → 英文风格词。想加新风格直接在这里加一行
 const IMG_STYLES = {
+  截图: 'smartphone screenshot, mobile app UI, flat interface, status bar at top, crisp screen capture',
+  宝丽来: 'polaroid instant photo, white border frame, soft faded colors, slight vignette, instant film look',
+  夜拍: 'night smartphone photo, low light, city lights, slight noise, glowing street lamps, moody',
   随拍: 'casual smartphone photo, natural lighting, slightly imperfect framing, everyday life, candid',
   实拍: 'realistic photography, high detail, natural colors, shallow depth of field',
   胶片: 'analog film photography, 35mm film, Kodak Portra 400, natural film grain, warm faded colors, soft highlights, slight light leak, nostalgic',
@@ -13,7 +16,7 @@ const IMG_STYLES = {
   涂鸦: 'cute doodle, crayon drawing, childlike hand drawn style, simple shapes',
 };
 // 拍照类，谁都能发；其余算画作，只有填了画风偏好的角色会发
-const PHOTO_STYLES = ['随拍', '实拍', '胶片', 'CCD'];
+const PHOTO_STYLES = ['随拍', '实拍', '胶片', 'CCD', '截图', '宝丽来', '夜拍', '宠物截图'];
 const AVATAR_EN = 'square avatar, centered composition, single subject, close-up, clean background, profile picture';
 
 // 图片、表情包、识图、生图、换头像
@@ -62,28 +65,29 @@ const Media = {
       ],
     }], { maxTokens: 300, temperature: 0.3 });
   },
-  // 拆出「类型|描述」，没写类型或类型不认识就用默认
+   // 拆出「类型|描述」。不在表里的类型也保留，交给 makePrompt 翻译成风格词
   parseStyle(s, def = '随拍') {
-    const m = String(s).match(/^\s*([^|｜]{1,6})\s*[|｜]\s*(.+)$/);
-    if (m && IMG_STYLES[m[1].trim()]) return { style: m[1].trim(), desc: m[2].trim() };
-    return { style: def, desc: String(s).replace(/^.*?[|｜]/, '').trim() };
+    const m = String(s).match(/^\s*([^|｜]{1,8})\s*[|｜]\s*(.+)$/);
+    if (m) return { style: m[1].trim(), desc: m[2].trim() };
+    return { style: def, desc: String(s).trim() };
   },
 
   // 中文描述 → 英文提示词 + 风格词
-  async makePrompt(desc, style, ch = null, purpose = 'photo') {
-    const st = IMG_STYLES[style] || IMG_STYLES.随拍;
-    let main = desc;
+    async makePrompt(desc, style, ch = null, purpose = 'photo') {
+    const known = IMG_STYLES[style];
+    let main = desc, custom = '';
     if (S.settings.image.translate !== false && S.settings.claude.key) {
       try {
-        const sys = `You write prompts for an image generation model. Turn the Chinese description into ONE line of English, comma-separated visual keywords, under 50 words.
-Describe only what is visible: subject, setting, lighting, colors, mood. No style words (style is added separately). No text or watermarks.${purpose === 'avatar' ? ' It is a profile picture.' : ''} Output only the prompt.`;
-                const ctx = ch?.artStyle && !PHOTO_STYLES.includes(style) ? `\n（作者的画风偏好：${ch.artStyle}）` : '';
-        main = (await API.claude(sys, [{ role: 'user', content: desc + ctx }], { maxTokens: 200, temperature: 0.5 })).split('\n')[0].trim() || desc;
+        const sys = `You write prompts for an image generation model. Turn the Chinese description into ONE line of English, comma-separated visual keywords, under 60 words.
+Describe what is visible: subject, setting, lighting, colors, mood. No text or watermarks.${known ? ' Do not add style words (style is added separately).' : ' A style is given in brackets: end the line with a few English keywords for that style.'}${purpose === 'avatar' ? ' It is a profile picture.' : ''} Output only the prompt.`;
+        const art = ch?.artStyle && !PHOTO_STYLES.includes(style) ? `\n（作者的画风偏好：${ch.artStyle}）` : '';
+        const st = known ? '' : `\n（风格：${style}）`;
+        main = (await API.claude(sys, [{ role: 'user', content: desc + st + art }], { maxTokens: 200, temperature: 0.5 })).split('\n')[0].trim() || desc;
       } catch (e) {
         Log.add('生图提示词改写失败，改用原描述', e.message);
       }
-    }
-    return [main, st, purpose === 'avatar' ? AVATAR_EN : ''].filter(Boolean).join(', ');
+    } else if (!known) custom = IMG_STYLES.随拍; // 没法翻译时退回随拍
+    return [main, known || custom, purpose === 'avatar' ? AVATAR_EN : ''].filter(Boolean).join(', ');
   },
 
   // ===== 生图 =====
@@ -142,7 +146,8 @@ Describe only what is visible: subject, setting, lighting, colors, mood. No styl
     const artists = S.chars.filter(c => c.artStyle).map(c => `${c.name}（${c.artStyle}）`);
        const arts = Object.keys(IMG_STYLES).filter(k => !PHOTO_STYLES.includes(k));
     r.push(`- 发图片：单独一行 ${p}[图片]类型|画面描述。偶尔用。
-  拍照类型：随拍（手机随手拍的日常，比如饭菜、街景、天空）、实拍（认真拍的风景或物品）、胶片（用胶片相机拍的，有颗粒和怀旧感）、CCD（老式卡片数码相机拍的，闪光灯直打，有千禧年感）。按角色的性格和习惯选，喜欢复古、爱拍照的人更常用胶片或 CCD。
+    拍照类型：随拍（手机随手拍的日常，比如饭菜、街景、天空）、实拍（认真拍的风景或物品）、胶片（有颗粒和怀旧感）、CCD（老式卡片机，闪光灯直打，千禧年感）、宝丽来、夜拍、截图（手机屏幕截图，比如聊天、游戏、App 页面）。按角色的性格和习惯选。也可以写别的类型，比如：拍立得、监控画面、扫描件。
+  宠物截图：晒自己参与养的电子宠物时用，单独一行 ${p}[图片]宠物截图|宠物名字，会直接截一张养宠 App 的图。
   画作类型：${arts.join('、')}。
   ${artists.length ? `只有会画画的人才发画作：${artists.join('、')}，按各自画风选类型。其他人只发拍照类型。` : '大家都不画画，只发拍照类型。'}
   画面描述写具体：拍了什么、在哪、光线和氛围。例如：${p}[图片]随拍|刚出锅的番茄炒蛋，旁边一碗米饭，厨房暖黄的灯光`);
@@ -189,6 +194,14 @@ Describe only what is visible: subject, setting, lighting, colors, mood. No styl
     }
        if (it.type === 'photo') {
       const { style, desc } = this.parseStyle(it.content);
+      // 宠物截图：直接用宠物的点阵画，不走生图
+      if (style === '宠物截图') {
+        const pet = Pet.findForShot(it.sender, desc);
+        if (pet) {
+          const label = `（宠物截图）${Pet.petLabel(pet)}${desc && desc !== pet.name ? '，' + desc : ''}`;
+          return { sender: it.sender, type: 'image', content: label, extra: { url: Pet.snapshot(pet), desc: label, gen: true, style } };
+        }
+      }
       let url = null;
       if (S.settings.image.url) {
         try { url = await this.genImage(await this.makePrompt(desc, style, charById(it.sender))); }

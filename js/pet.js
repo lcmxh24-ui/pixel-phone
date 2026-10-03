@@ -79,6 +79,27 @@ const Pet = {
   hasPersona: p => p.owners.some(o => o.startsWith('p:')),
   charOwners: p => p.owners.filter(o => !o.startsWith('p:')).map(charById).filter(Boolean),
   visible(p) { return this.isMine(p) || (!this.hasPersona(p) && this.charOwners(p).length > 0); },
+  // 帮忙照顾的人：你养的宠物，认识你、没拉黑你、会主动的角色（不是主人）
+  helpers(p) {
+    const o = p.owners.find(x => x.startsWith('p:'));
+    if (!o) return [];
+    const pid = o.slice(2);
+    return S.chars.filter(c => !p.owners.includes(c.id) && c.proactive !== false
+      && knows(pid, c.id) && !getRel(pid, c.id).theyBlock);
+  },
+  // 谁来照顾：有角色主人就是主人，没有就是帮忙的人
+  carers(p) {
+    const cs = this.charOwners(p);
+    return cs.length ? { cs, help: false } : { cs: this.helpers(p), help: true };
+  },
+  // 照顾的规则：主人认真，和你一起养的少一些，帮忙的人只在状态很差时出手
+  careRule(p, help) {
+    if (help) return { lim: 15, poop: 4, q: 0.06, doc: 0.02 };
+    const withMe = this.hasPersona(p);
+    return withMe ? { lim: 25, poop: 3, q: 0.15, doc: 0.03 } : { lim: 40, poop: 2, q: 0.5, doc: 0.2 };
+  },
+  // 你能不能照顾：自己的，或者主人里有你认识的角色
+  canCare(p) { return this.isMine(p) || this.charOwners(p).some(c => knows(activePid(), c.id)); },
   who(o) {
     if (o === 'sys') return '';
     return o.startsWith('p:') ? (persona(o.slice(2))?.name || '?') : (charById(o)?.name || '?');
@@ -101,13 +122,12 @@ const Pet = {
   // ===== 属性 =====
   // 按 15 分钟一段推进，这样跨越睡觉时间、离线很久也算得准
   // 离线补算时，角色主人在每一段里也会按 autoCare 的规则照顾
-  decay(p, now = Date.now()) {
+    decay(p, now = Date.now()) {
     let t = Math.max(p.ts || now, now - 14 * 86400e3);
     // 间隔超过 5 分钟才算离线补算；在线时每分钟 tick 由 autoCare 负责
     const offline = now - t > 5 * 60e3;
-    const cs = offline ? this.charOwners(p) : [];
-    const withMe = this.hasPersona(p);
-    const done = {}; // 离线期间各类照顾的次数，最后汇总写进动态
+    const care = offline ? this.carers(p) : { cs: [] };
+    const done = {}; // 离线期间每个人各类照顾的次数，最后汇总写进动态
     while (t < now) {
       const step = Math.min(15 * 60e3, now - t), h = step / 3600e3, zz = this.asleep(p, t), k = zz ? 0.5 : 1;
       p.poopAcc = (p.poopAcc || 0) + h / 3.5 * k;
@@ -115,49 +135,45 @@ const Pet = {
       p.hunger = clamp100(p.hunger - 8 * h * k);
       if (!zz) p.happy = clamp100(p.happy - 4 * h - (p.hunger < 20 ? 4 * h : 0) - (p.sick ? 6 * h : 0));
       p.clean = clamp100(p.clean - (3 * h + p.poop * 2 * h) * k);
-      // 长期没人管会生病
       const bad = p.hunger < 10 || p.clean < 10 || p.poop >= 4;
       p.neglect = bad ? (p.neglect || 0) + h : Math.max(0, (p.neglect || 0) - h / 2);
       if (!p.sick && p.neglect >= 6) { p.sick = true; this.log(p, 'sys', '生病了，需要看医生'); }
       if (!zz && p.hunger > 50 && p.clean > 50 && p.happy > 50) this.grow(p, h);
-      // 离线时角色照顾一次（按这一段的时长换算概率）
-      if (cs.length) this.offlineCare(p, t, step / 60e3, withMe, done);
+      if (care.cs.length) this.offlineCare(p, t, step / 60e3, care, done);
       t += step;
     }
     p.ts = now;
-    // 汇总写一条动态，避免离线几小时刷满日志
-    if (cs.length) {
-      const TXT = { feed: '喂了它', clean: '铲了屎', bath: '给它洗了澡', pet: '摸了摸它', doctor: '带它看了医生，已经好了' };
-      for (const [kind, n] of Object.entries(done)) {
-        this.log(p, pick(cs).id, `（你不在的时候）${TXT[kind]}${n > 1 ? ` ×${n}` : ''}`);
-      }
+    // 汇总：每个人每类照顾写一条
+    const TXT = { feed: '喂了它', clean: '铲了屎', bath: '给它洗了澡', pet: '摸了摸它', doctor: '带它看了医生，已经好了' };
+    for (const [key, n] of Object.entries(done)) {
+      const [cid, kind] = key.split('|');
+      this.log(p, cid, `（你不在的时候）${care.help ? '帮忙' : ''}${TXT[kind]}${n > 1 ? ` ×${n}` : ''}`);
     }
   },
 
   // 离线补算用的简化照顾：规则和 autoCare 一致，但直接改属性，不放特效、不写单条日志
-  offlineCare(p, t, minutes, withMe, done) {
-    // autoCare 是"每分钟概率 q"，换算成这一段的概率
+    offlineCare(p, t, minutes, care, done) {
+    const r = this.careRule(p, care.help);
     const roll = q => Math.random() < 1 - (1 - q) ** minutes;
     const zz = this.asleep(p, t);
     let kind = null;
     if (p.sick) {
-      if (roll(withMe ? 0.03 : 0.2)) kind = 'doctor';
+      if (roll(r.doc)) kind = 'doctor';
     } else {
-      const lim = withMe ? 25 : 40;
       const need = zz
         ? (p.poop >= 3 ? 'clean' : null)
-        : p.hunger < lim ? 'feed' : p.poop >= (withMe ? 3 : 2) ? 'clean' : p.clean < lim - 10 ? 'bath' : p.happy < lim ? 'pet' : null;
-      if (need && roll(withMe ? 0.15 : 0.5)) kind = need;
+        : p.hunger < r.lim ? 'feed' : p.poop >= r.poop ? 'clean' : p.clean < r.lim - 10 ? 'bath' : p.happy < r.lim ? 'pet' : null;
+      if (need && roll(r.q)) kind = need;
     }
     if (!kind) return;
-    // 效果和 act 里一致；角色看医生不扣钱包
     if (kind === 'feed') { p.hunger = clamp100(p.hunger + 35); p.happy = clamp100(p.happy + 3); p.poopAcc = (p.poopAcc || 0) + 0.25; }
     if (kind === 'clean') { p.poop = 0; p.clean = clamp100(p.clean + 10); }
     if (kind === 'bath') { p.clean = 100; p.happy = clamp100(p.happy + (p.sp === 'cat' ? -8 : 6)); }
     if (kind === 'pet') p.happy = clamp100(p.happy + 8);
     if (kind === 'doctor') { p.sick = false; p.neglect = 0; p.happy = clamp100(p.happy + 5); }
     this.grow(p, 2);
-    done[kind] = (done[kind] || 0) + 1;
+    const key = pick(care.cs).id + '|' + kind;
+    done[key] = (done[key] || 0) + 1;
   },
 
   grow(p, amount) {
@@ -221,25 +237,26 @@ const Pet = {
       t = '带它看了医生，已经好了'; this.addFx('💊', 2);
     }
     if (!t) return '';
+        // 不是主人就算帮忙（包括你帮角色照顾）
+    if (!p.owners.includes(who)) t = '帮忙' + t;
     this.log(p, who, t);
     if (kind !== 'wake') this.grow(p, 2);
     return (mine ? '你' : this.who(who)) + t;
   },
 
   // 角色自动照顾，不调用 AI。和我一起养的照顾得少一些
-  async autoCare(p) {
-    const cs = this.charOwners(p);
+    async autoCare(p) {
+    const { cs, help } = this.carers(p);
     if (!cs.length) return;
-    const withMe = this.hasPersona(p);
+    const r = this.careRule(p, help);
     if (p.sick) {
-      if (Math.random() < (withMe ? 0.03 : 0.2)) await this.act(p, 'doctor', pick(cs).id);
+      if (Math.random() < r.doc) await this.act(p, 'doctor', pick(cs).id);
       return;
     }
-    const lim = withMe ? 25 : 40;
-    let need = null;
-    if (this.asleep(p)) need = p.poop >= 3 ? 'clean' : null;
-    else need = p.hunger < lim ? 'feed' : p.poop >= (withMe ? 3 : 2) ? 'clean' : p.clean < lim - 10 ? 'bath' : p.happy < lim ? 'pet' : null;
-    if (need && Math.random() < (withMe ? 0.15 : 0.5)) await this.act(p, need, pick(cs).id);
+    const need = this.asleep(p)
+      ? (p.poop >= 3 ? 'clean' : null)
+      : p.hunger < r.lim ? 'feed' : p.poop >= r.poop ? 'clean' : p.clean < r.lim - 10 ? 'bath' : p.happy < r.lim ? 'pet' : null;
+    if (need && Math.random() < r.q) await this.act(p, need, pick(cs).id);
   },
 
   // 晒宠物：每只最快 12 小时一次，每分钟 1/240 的概率
@@ -258,7 +275,7 @@ const Pet = {
   showTopic(p, charId) {
     const co = p.owners.filter(o => o !== charId).map(o => this.who(o));
     const recent = p.log.slice(0, 2).map(l => this.who(l.who) + l.text).join('；');
-    return `这次你想在朋友圈晒一下${co.length ? '和' + co.join('、') + '一起' : '自己'}养的${SPECIES[p.sp].name}「${p.name}」（${this.colorName(p)}，${STAGES[this.stage(p)].n}），它现在${this.mood(p)}。${recent ? '最近：' + recent + '。' : ''}配一两张宠物的照片。`;
+    return `这次你想在朋友圈晒一下${co.length ? '和' + co.join('、') + '一起' : '自己'}养的${SPECIES[p.sp].name}「${p.name}」（${this.colorName(p)}，${STAGES[this.stage(p)].n}），它现在${this.mood(p)}。${recent ? '最近：' + recent + '。' : ''}这是养宠 App 里的像素电子宠物，不是真的动物。配图用 [图片]宠物截图|${p.name}，也可以再配一张别的日常照片。`;
   },
 
   async tickAll() {
@@ -282,14 +299,15 @@ const Pet = {
       const whose = own
         ? `${charById(charId)?.name}${co.length ? '和' + co.join('、') + '一起' : '自己'}养的`
         : `${co.join('、')}养的`;
-      return { ts: p.log[0]?.ts || p.born, t: `[宠物] ${whose}${this.colorName(p)}${SPECIES[p.sp].name}「${p.name}」（${STAGES[this.stage(p)].n}），现在${this.mood(p)}${recent ? '。最近：' + recent : ''}` };
+      return { ts: p.log[0]?.ts || p.born, t: `[手机养宠App里的像素电子宠物，不是真实动物] ${whose}${this.colorName(p)}${SPECIES[p.sp].name}「${p.name}」（${STAGES[this.stage(p)].n}），现在${this.mood(p)}${recent ? '。最近：' + recent : ''}` };
     });
   },
 
   // ===== 角色自己领养 / 邀请一起养 / 改名 =====
   rules(p) {
     const sps = Object.values(SPECIES).map(s => `${s.name}（${s.colors.map(c => c.n).join('/')}）`).join('、');
-    return `- 宠物（很少用。真的想养、符合性格和剧情时才用，可以自己主动决定，不用等别人提）：
+        return `- 宠物（很少用。真的想养、符合性格和剧情时才用，可以自己主动决定，不用等别人提）：
+  注意：这里的宠物都是大家手机上一个养宠小程序里的像素电子宠物，不是现实里的动物。喂食、洗澡、遛弯、看医生都是在 App 里点按钮，不能抱、不能带出门、不会真的掉毛。可以像聊手游一样聊它。
   自己领养：单独一行 ${p}[领养]动物|花色|名字
   想和对方一起养：单独一行 ${p}[一起领养]动物|花色|名字。名字可以空着，让对方起或者之后一起商量。对方同意了才算数。
   给自己参与养的宠物改名（比如商量好了新名字）：单独一行 ${p}[宠物改名]旧名字|新名字
@@ -322,6 +340,49 @@ const Pet = {
     return p;
   },
   petLabel(p) { return `${this.colorName(p)}${SPECIES[p.sp].name}「${p.name}」`; },
+  // 角色晒宠物截图时找宠物：优先名字对得上的，否则用他养的第一只
+  findForShot(charId, desc) {
+    const mine = this.list.filter(p => p.owners.includes(charId));
+    return mine.find(p => desc && desc.includes(p.name)) || mine[0] || null;
+  },
+
+  // 画一张养宠 App 的截图，返回图片地址（data URL）
+  snapshot(p) {
+    const W = 240, H = 220, cv = document.createElement('canvas');
+    cv.width = W; cv.height = H;
+    const ctx = cv.getContext('2d');
+    ctx.imageSmoothingEnabled = false;
+    this.decay(p);
+    const zz = this.asleep(p), si = this.stage(p);
+    // 背景和顶部标题栏
+    ctx.fillStyle = cvar('panel'); ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = cvar('accent'); ctx.fillRect(0, 0, W, 26);
+    ctx.fillStyle = cvar('text'); ctx.font = 'bold 13px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText(`🐾 ${p.name}`, W / 2, 18);
+    // 小窝
+    ctx.fillStyle = cvar('them'); ctx.fillRect(10, 34, W - 20, 120);
+    ctx.fillStyle = cvar('accent2'); ctx.fillRect(10, 146, W - 20, 8);
+    const map = this.mapOf(p), w = map[0].length, h = map.length;
+    const s = Math.max(2, Math.round(Math.floor(90 / Math.max(w, h)) * STAGES[si].k));
+    ctx.fillStyle = '#7a4a20';
+    [24, 200, 50].slice(0, p.poop).forEach(px => { ctx.fillRect(px, 140, 8, 6); ctx.fillRect(px + 2, 135, 4, 5); });
+    this.drawSprite(ctx, p, Math.round((W - w * s) / 2), 146 - h * s, s, { blink: zz });
+    if (zz) {
+      ctx.fillStyle = 'rgba(20,24,60,.4)'; ctx.fillRect(10, 34, W - 20, 120);
+      ctx.font = '16px sans-serif'; ctx.fillText('🌙', W - 28, 54);
+    }
+    if (p.sick) { ctx.font = '16px sans-serif'; ctx.fillText('🤒', W / 2 + w * s / 2 + 8, 146 - h * s); }
+    // 状态
+    ctx.fillStyle = cvar('text'); ctx.font = '11px sans-serif';
+    ctx.fillText(`${this.colorName(p)}${SPECIES[p.sp].name} · ${STAGES[si].n} · ${this.mood(p)}`, W / 2, 170);
+    const bar = (label, v, y) => {
+      ctx.textAlign = 'left'; ctx.fillStyle = cvar('text'); ctx.fillText(label, 14, y + 8);
+      ctx.fillStyle = cvar('border'); ctx.fillRect(66, y, 150, 8);
+      ctx.fillStyle = cvar('accent2'); ctx.fillRect(67, y + 1, 148 * v / 100, 6);
+    };
+    bar('🍖 饱腹', p.hunger, 178); bar('🧼 清洁', p.clean, 192); bar('😊 心情', p.happy, 206);
+    return cv.toDataURL('image/png');
+  },
 
   // 角色自己领养。在角色间私聊里说的，算两个人一起养
   async charAdopt(charId, spec, convId) {
@@ -623,7 +684,7 @@ const Pet = {
     if (!p) return this.renderList();
     this.stopAll(); this.view = 'pet'; this.back = () => this.renderList();
     this.decay(p);
-    const can = this.isMine(p), zz = this.asleep(p), cs = this.charOwners(p);
+        const can = this.canCare(p), zz = this.asleep(p), cs = this.charOwners(p);
     const acts = zz
       ? '<button class="btn" data-do="clean">🧹 铲屎</button><button class="btn" data-do="pet">🤚 轻轻摸</button><button class="btn ghost" data-do="wake">⏰ 叫醒</button>'
       : `<button class="btn" data-do="feed">🍚 喂食</button><button class="btn" data-do="clean">🧹 铲屎</button>
@@ -636,11 +697,11 @@ const Pet = {
                 <h3>小游戏</h3>${zz || p.sick ? `<p class="empty">${p.sick ? '生病了，先去看医生吧' : '睡着了，等它醒了再玩'}</p>` : `<div class="pet-acts">
         <button class="btn ghost" data-game="catch">🍎 接食物</button><button class="btn ghost" data-game="run">🏃 跑酷</button>
         <button class="btn ghost" data-game="box">📦 推箱子</button><button class="btn ghost" data-game="monopoly">🎲 大富翁</button></div>`}`
-        : '<p class="empty">这是角色们自己养的，你只能看看。</p>'}
+                : '<p class="empty">你还不认识它的主人，只能看看。</p>'}
       ${cs.length && S.settings.claude.key ? '<button class="btn ghost" data-pa="show">📸 让主人晒一下</button>' : ''}
       <h3>动态</h3><div class="pet-log" id="pet-log"></div>
       <small>${esc(this.ownerText(p))}</small>
-      ${can ? '<button class="btn ghost" data-pa="edit" style="margin-top:8px">⚙ 设置</button>' : ''}`);
+            ${this.isMine(p) ? '<button class="btn ghost" data-pa="edit" style="margin-top:8px">⚙ 设置</button>' : ''}`);
 
     const bar = (l, v) => `<div class="pet-bar"><span>${l}</span><div class="pet-track"><i style="width:${Math.round(v)}%"></i></div><small>${Math.round(v)}</small></div>`;
     this.updStats = () => {
@@ -798,7 +859,7 @@ const Pet = {
       `【${owner.name}的设定】\n${owner.persona || '（无）'}`,
       `【和${me.name}的关系】${rel.desc || '认识'}`,
       WB.build([owner.id], '').constant && `【世界设定】\n${WB.build([owner.id], '').constant}`,
-      `【场景】${owner.name}正在遛自己养的${SPECIES[enc.sp].name}「${enc.name}」，路上偶遇了正在遛${SPECIES[p.sp].name}「${p.name}」的${me.name}。「${p.name}」是${STAGES[this.stage(p)].n}，${this.mood(p)}。`,
+            `【场景】${owner.name}和${me.name}都在用手机上的养宠 App（宠物是像素电子宠物，不是真的动物）。${owner.name}正在 App 里遛自己的${SPECIES[enc.sp].name}「${enc.name}」，在 App 的小路上偶遇了${me.name}的${SPECIES[p.sp].name}「${p.name}」。两人不是真的见面，${owner.name}说的话是在 App 里发给${me.name}的留言。「${p.name}」是${STAGES[this.stage(p)].n}，${this.mood(p)}。`,
       `【要求】\n- 只写${owner.name}当面说的话，1 到 3 句，每句一行。\n- 口语化，符合性格，可以夸对方的宠物、聊自己的宠物，或者顺口聊两句别的。\n- 不写动作、神态和旁白，不加名字前缀。`,
     ].filter(Boolean).join('\n\n');
     const out = await API.claude(system, [{ role: 'user', content: `现在是${nowText()}。${Weather.text()}` }], { maxTokens: 300 });

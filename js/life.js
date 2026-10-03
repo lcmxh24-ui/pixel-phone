@@ -339,7 +339,8 @@ const Moments = {
       ...Prompt.styleBlocks(pid, ch.name), langRule, `【要求】
 - 像真人发朋友圈，符合性格。可以是日常、心情、吐槽、分享，可以和最近的事有关，但不会把私聊内容直接公开。
 - 先写文字，可以很短。如果配图，另起一行写 [图片]类型|画面描述，最多 3 张，也可以不配图。
-    类型：${PHOTO_STYLES.join('、')}（胶片和 CCD 是用复古相机拍的）${ch.artStyle ? `，或者你自己的画作（画风：${ch.artStyle}）：${Object.keys(IMG_STYLES).filter(k => !PHOTO_STYLES.includes(k)).join('、')}` : ''}。
+        类型：${PHOTO_STYLES.filter(k => k !== '宠物截图').join('、')}（胶片和 CCD 是用复古相机拍的；截图是手机屏幕截图），也可以写别的类型，比如拍立得、监控画面${ch.artStyle ? `，或者你自己的画作（画风：${ch.artStyle}）：${Object.keys(IMG_STYLES).filter(k => !PHOTO_STYLES.includes(k)).join('、')}` : ''}。${Pet.list.some(x => x.owners.includes(charId)) ? `
+    晒自己参与养的电子宠物时，写 [图片]宠物截图|宠物名字，会直接截一张养宠 App 的图。宠物是 App 里的像素电子宠物，不是真的动物。` : ''}
 - 只输出朋友圈内容，不写解释。`].filter(Boolean).join('\n\n');
     let out;
     try {
@@ -358,6 +359,14 @@ const Moments = {
       if (images.length >= 3) continue;
       let url = '';
       const { style, desc } = Media.parseStyle(m[1]);
+      // 宠物截图：直接用宠物点阵画，不走生图
+      if (style === '宠物截图') {
+        const pet = Pet.findForShot(charId, desc);
+        if (pet) {
+          images.push({ url: Pet.snapshot(pet), desc: `（宠物截图）${Pet.petLabel(pet)}` });
+          continue;
+        }
+      }
       if (S.settings.image.url) {
         try { url = (await Media.genImage(await Media.makePrompt(desc, style, ch))) || ''; }
         catch (e) { Log.add('朋友圈配图生成失败', e.message); }

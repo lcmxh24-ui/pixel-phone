@@ -332,6 +332,13 @@ input,textarea,select,.inputbar textarea{font-size:max(16px,var(--fs))}
 .rel-tools{position:sticky;top:-10px;z-index:5}
 .rel[hidden],[data-sec][hidden],#rel-batch[hidden]{display:none}
 .rel .row input[data-sel]{flex:none}
+/* ===== 世界书：搜索 + 批量 ===== */
+.wb-item{cursor:default}
+.wb-item input[data-sel]{flex:none}
+.wb-open{display:block;min-width:0;padding:0;background:none;border:none;color:inherit;font:inherit;text-align:left;cursor:pointer}
+.wb-item[hidden],.row[hidden],#wb-batch[hidden],#wb-none[hidden]{display:none}
+.pc-list{max-height:40vh;overflow-y:auto}
+
 /* 线下剧情面板 */
 .off-panel { max-height: 55vh; overflow-y: auto; margin-top: 8px; }
 .off-item { border: 2px dashed var(--border); border-radius: 6px; margin-bottom: 6px; background: var(--panel); }
