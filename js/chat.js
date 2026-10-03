@@ -509,7 +509,7 @@ const Forward = {
 
   // 给 AI 看的文字
   text(m) {
-    const lines = (m.items || []).map(x => `${x.name}：${x.text}`).join('\n');
+        const lines = (m.items || []).map(x => `${x.name}：${x.text}${x.as ? `（实际是用${x.as}发的）` : ''}`).join('\n');
     return `[转发的聊天记录：${m.title || '聊天记录'}]\n${lines}\n[聊天记录结束]`;
   },
 
@@ -556,10 +556,12 @@ const Forward = {
     if (!list.length) { toast('还没选消息'); return null; }
     const to = await this.pickTarget(pid, fromConv);
     if (!to) return null;
-    const items = list.map(x => ({
+        const items = list.map(x => ({
       name: senderName(x, pid),
       text: preview(x, false, pid) + (x.trans ? ` [译]${x.trans}` : ''),
       ts: x.ts,
+      // 你发的消息如果设了"在对方看来是某语言"，转发时一起带上
+      as: Lang.sentAs(x) || '',
     }));
     const title = Conv.label(fromConv, pid).replace(/的私聊$/, '') + '的聊天记录';
     await addMsg(to, 'user', title, 'forward', { items, title });
