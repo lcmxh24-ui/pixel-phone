@@ -58,6 +58,17 @@ const WALK_FLAVOR = ['在草丛里发现了一只蝴蝶', '捡到了一片好看
 
 const clamp100 = v => Math.max(0, Math.min(100, v));
 const cvar = k => getComputedStyle(document.documentElement).getPropertyValue('--' + k).trim() || '#333';
+// 小院里的场景，画法和宠物一样：一个字符一个像素
+const YARD_PROPS = {
+  tree: { pal: { G: '#5f9a3a', L: '#7cc850', T: '#8a5a2a' }, map: [
+    '..GGGGG..', '.GGLGGGG.', 'GGGGGLGGG', 'GLGGGGGGG', 'GGGGGGLGG', '.GGGGGGG.', '..GGGGG..', '....T....', '....T....', '...TTT...'] },
+  house: { pal: { R: '#e04a3a', W: '#f0d8a8', D: '#5a3a18' }, map: [
+    '....R....', '...RRR...', '..RRRRR..', '.RRRRRRR.', '.WWWWWWW.', '.WWDDDWW.', '.WWDDDWW.', '.WWDDDWW.'] },
+  bowl: { pal: { F: '#e8902a', B: '#4a90d0' }, map: ['.FFFF.', 'BBBBBB', '.BBBB.'] },
+  flower: { pal: { P: '#f490b0', Y: '#f8d838', G: '#4f8a2a' }, map: ['.P.', 'PYP', '.P.', '.G.', '.G.'] },
+  flower2: { pal: { P: '#a888d8', Y: '#ffffff', G: '#4f8a2a' }, map: ['.P.', 'PYP', '.P.', '.G.'] },
+  grass: { pal: { G: '#4f8a2a' }, map: ['.G..G.', 'GG.GGG'] },
+};
 
 const Pet = {
   list: [], view: 'list', curId: null, fx: [], _raf: 0, game: null, back: null, updStats: null,
@@ -88,9 +99,12 @@ const Pet = {
       && knows(pid, c.id) && !getRel(pid, c.id).theyBlock);
   },
   // 谁来照顾：有角色主人就是主人，没有就是帮忙的人
-  carers(p) {
+    carers(p) {
     const cs = this.charOwners(p);
-    return cs.length ? { cs, help: false } : { cs: this.helpers(p), help: true };
+    if (cs.length) return { cs, help: false };
+    // 去角色家串门时，由那个角色帮忙照顾
+    const host = p.visit && p.visit.until > Date.now() && charById(p.visit.host);
+    return { cs: host ? [host] : this.helpers(p), help: true };
   },
   // 照顾的规则：主人认真，和你一起养的少一些，帮忙的人只在状态很差时出手
   careRule(p, help) {
@@ -278,8 +292,14 @@ const Pet = {
     return `这次你想在朋友圈晒一下${co.length ? '和' + co.join('、') + '一起' : '自己'}养的${SPECIES[p.sp].name}「${p.name}」（${this.colorName(p)}，${STAGES[this.stage(p)].n}），它现在${this.mood(p)}。${recent ? '最近：' + recent + '。' : ''}这是养宠 App 里的像素电子宠物，不是真的动物。配图用 [图片]宠物截图|${p.name}，也可以再配一张别的日常照片。`;
   },
 
-  async tickAll() {
-    for (const p of this.list) { this.decay(p); await this.autoCare(p); this.maybeShowOff(p); }
+    async tickAll() {
+    for (const p of this.list) {
+      this.decay(p);
+      if (p.visit && p.visit.until <= Date.now()) this.endVisit(p);
+      await this.autoCare(p);
+      this.maybeShowOff(p);
+      this.maybeVisit(p);
+    }
     await this.save();
     if (this.view === 'pet' && !$('#pet-root')?.hidden) this.updStats?.();
     this.drawFab();
@@ -289,7 +309,8 @@ const Pet = {
   contextLines(charId, pid) {
     const me = 'p:' + pid;
     return this.list.filter(p =>
-      (p.owners.includes(charId) && (p.owners.includes(me) || !this.hasPersona(p)))
+            this.loc(p) === charId
+      || (p.owners.includes(charId) && (p.owners.includes(me) || !this.hasPersona(p)))
       || (p.owners.includes(me) && !p.owners.includes(charId) && knows(pid, charId))
     ).map(p => {
       this.decay(p);
@@ -299,7 +320,8 @@ const Pet = {
       const whose = own
         ? `${charById(charId)?.name}${co.length ? '和' + co.join('、') + '一起' : '自己'}养的`
         : `${co.join('、')}养的`;
-      return { ts: p.log[0]?.ts || p.born, t: `[手机养宠App里的像素电子宠物，不是真实动物] ${whose}${this.colorName(p)}${SPECIES[p.sp].name}「${p.name}」（${STAGES[this.stage(p)].n}），现在${this.mood(p)}${recent ? '。最近：' + recent : ''}` };
+      return { ts: p.log[0]?.ts || p.born, t: `[手机养宠App里的像素电子宠物，不是真实动物] ${whose}${this.colorName(p)}${SPECIES[p.sp].name}「${p.name}」（${STAGES[this.stage(p)].n}），现在${this.mood(p)}${this.loc(p) !== this.homeOf(p) ? `，正在${this.who(this.loc(p))}家串门` : ''}
+${recent ? '。最近：' + recent : ''}` };
     });
   },
 
@@ -312,6 +334,7 @@ const Pet = {
   想和对方一起养：单独一行 ${p}[一起领养]动物|花色|名字。名字可以空着，让对方起或者之后一起商量。对方同意了才算数。
   给自己参与养的宠物改名（比如商量好了新名字）：单独一行 ${p}[宠物改名]旧名字|新名字
   照顾宠物：对方让你帮忙照看，或者你自己想帮忙时，单独一行 ${p}[照顾宠物]宠物名字|喂食/铲屎/洗澡/摸摸/看医生。可以照顾自己养的，也可以帮认识的人照顾。一次一个动作，能做到就答应，不用推脱说做不到。
+  宠物串门：想带自己养的宠物去对方家玩，单独一行 ${p}[宠物串门]自己宠物的名字|去；想邀请对方的宠物来自己家玩，单独一行 ${p}[宠物串门]对方宠物的名字|来。可以加小时数：名字|来|3。偶尔用。
   每人自己最多养 3 只。能养的动物和花色：${sps}`;
   },
 
@@ -514,7 +537,7 @@ const Pet = {
     const b = document.createElement('button');
     b.id = 'pet-fab';
     b.setAttribute('aria-label', '召唤宠物');
-    b.innerHTML = '<canvas width="48" height="48"></canvas>';
+        b.innerHTML = '<span style="font-size:24px" aria-hidden="true">🐾</span>';
     document.body.appendChild(b);
 
     let fx = 0, fy = 0;
@@ -556,11 +579,356 @@ const Pet = {
     };
     b.onpointercancel = () => { sx = null; };
 
-    this.startFabAnim();
+        this.mountYard();
   },
 
   // 宠物有变化时调用，动画循环下一帧会自动用新的宠物
   drawFab() {},
+  // ===== 小院：屏幕底部，宠物自己跑来跑去 =====
+  yardCfg() { return S.settings.petYard ??= { on: true, scene: true, bottom: 0 }; },
+  homeOf(p) { return p.owners.find(o => o.startsWith('p:')) || p.owners[0]; },
+  // 宠物现在在谁家：串门中就是对方家，否则是自己家
+  loc(p, now = Date.now()) { return p.visit && p.visit.until > now ? p.visit.host : this.homeOf(p); },
+  hostName(h) { return h === this.me() ? '我' : this.who(h); },
+  yardPets() { const me = this.me(); return this.list.filter(p => this.loc(p) === me).slice(0, 8); },
+
+  mountYard() {
+    const H = 84, GROUND = H - 6;
+    const cv = document.createElement('canvas');
+    cv.id = 'pet-yard';
+    cv.setAttribute('aria-hidden', 'true');
+    // 不挡点击：只有点到宠物身上才会被拦下来
+    Object.assign(cv.style, { position: 'fixed', left: '0', width: '100%', height: H + 'px', pointerEvents: 'none', zIndex: '40' });
+    document.body.appendChild(cv);
+    const ctx = cv.getContext('2d'), off = document.createElement('canvas'), octx = off.getContext('2d');
+    let W = 0, dpr = 1;
+    const resize = () => {
+      dpr = Math.min(2, devicePixelRatio || 1);
+      W = document.documentElement.clientWidth;
+      cv.width = W * dpr; cv.height = H * dpr;
+    };
+    resize();
+    addEventListener('resize', resize);
+
+    const A = new Map(); // 每只宠物的动画状态
+    const R = (a, b) => a + Math.random() * (b - a);
+    const ball = { x: W * 0.6, h: 0, v: 0, vx: 0 };
+    const flies = [0, 1, 2].map(i => ({ x: Math.random() * W, y: 18 + i * 12, ph: Math.random() * 6, vx: R(0.3, 0.7) * (i % 2 ? -1 : 1), c: ['#f8d838', '#f4a0b0', '#a8e8f8'][i] }));
+    let bubbles = [], frame = 0, prev = 0, drag = null, eatClick = false, col = null;
+    const props = () => ({ house: W * 0.08, bowl: W * 0.08 + 34, tree: W * 0.84, flowers: [0.3, 0.47, 0.64, 0.95].map(f => W * f) });
+    const sizeOf = p => Math.max(2, Math.round(3.5 * STAGES[this.stage(p)].k));
+    const bubble = (a, ch) => { if (bubbles.filter(b => b.a === a).length < 2) bubbles.push({ a, ch, life: 1 }); };
+    const go = (a, mode, ms, extra = {}) => Object.assign(a, { mode, until: performance.now() + ms, chew: false, met: false, ...extra });
+
+    // 每隔几秒给宠物换一个想做的事
+    const choose = (a, all) => {
+      const p = a.p, sc = this.yardCfg().scene;
+      if (this.asleep(p)) return go(a, 'sleep', 6000);
+      if (p.sick) return go(a, 'sick', 6000);
+      if (sc && p.hunger < 35 && Math.random() < 0.6) return go(a, 'eat', 7000, { tx: props().bowl + 20 });
+      const mates = all.filter(o => o !== a && !['sleep', 'sick', 'held', 'fall'].includes(o.mode));
+      const r = Math.random();
+      if (mates.length && r < 0.25) {
+        const o = pick(mates);
+        if (Math.random() < 0.5) {
+          go(a, 'chase', 5000, { tgt: o });
+          go(o, 'run', 5000, { tx: o.x + (o.x > a.x ? 1 : -1) * R(80, 160) });
+          bubble(a, '!');
+        } else { go(a, 'meet', 4000, { tgt: o }); go(o, 'meet', 4000, { tgt: a }); }
+        return;
+      }
+      if (r < 0.37) return go(a, 'ball', 6000);
+      if (r < 0.45 && !this.isNight()) return go(a, 'bug', 4000, { fly: pick(flies) });
+      if (p.happy < 30) return go(a, pick(['sit', 'sit', 'walk']), R(3000, 6000), { tx: R(0, W - a.w) });
+      return go(a, pick(['walk', 'walk', 'run', 'idle', 'sit', 'hop', 'spin']), R(2500, 5500), { tx: R(0, W - a.w) });
+    };
+    const toward = (a, tx, sp, k) => {
+      tx = Math.max(0, Math.min(W - a.w, tx));
+      const d = tx - a.x;
+      if (Math.abs(d) <= sp * k + 1) { a.x = tx; return true; }
+      a.dir = Math.sign(d); a.x += a.dir * sp * k;
+      return false;
+    };
+
+    const update = (a, k, now, all) => {
+      const m = a.mode;
+      // 重力：跳起来会落回地面
+      if (m !== 'held') {
+        a.v -= 0.35 * k;
+        a.h += a.v * k;
+        if (m === 'fall') {
+          a.x += a.vx * k;
+          if (a.x < 0 || a.x > W - a.w) { a.vx *= -0.6; a.x = Math.max(0, Math.min(W - a.w, a.x)); }
+        }
+        if (a.h <= 0) {
+          if (m === 'fall' && a.v < -1) { bubble(a, pick(['💢', '💫', '?'])); go(a, 'idle', 1500); }
+          a.h = 0; a.v = 0;
+        }
+      }
+      const ground = a.h === 0;
+      if (m === 'walk' || m === 'run') { if (toward(a, a.tx, m === 'run' ? 1.6 : 0.6, k)) go(a, 'idle', R(800, 2000)); }
+      else if (m === 'hop') {
+        if (!ground) a.x = Math.max(0, Math.min(W - a.w, a.x + a.dir * 0.9 * k));
+        else if (Math.random() < 0.05 * k) { a.v = R(3, 4.5); a.dir = a.tx > a.x ? 1 : -1; }
+      } else if (m === 'eat') {
+        if (toward(a, a.tx, 0.8, k)) { a.dir = -1; a.chew = true; if (frame % 90 === 0) bubble(a, pick(['🍚', '😋'])); }
+      } else if (m === 'ball') {
+        const bx = ball.x - a.w / 2;
+        if (toward(a, bx, 1.3, k) && ball.h < 4) {
+          ball.vx = (a.dir || 1) * R(2, 4); ball.v = R(2, 4);
+          if (Math.random() < 0.3) bubble(a, '♪');
+        }
+      } else if (m === 'chase') {
+        const t = a.tgt;
+        if (!t || ![...A.values()].includes(t)) go(a, 'idle', 1000);
+        else if (toward(a, t.x, 1.8, k)) {
+          bubble(a, pick(['♥', '♪'])); a.v = 3; t.v = 3;
+          go(a, 'idle', 1500); go(t, 'idle', 1500);
+        }
+      } else if (m === 'meet') {
+        const t = a.tgt;
+        if (!t || ![...A.values()].includes(t)) go(a, 'idle', 1000);
+        else if (toward(a, a.x < t.x ? t.x - a.w - 2 : t.x + t.w + 2, 0.7, k)) {
+          a.dir = a.x < t.x ? 1 : -1;
+          if (!a.met) { a.met = true; if (Math.random() < 0.6) bubble(a, pick(['♥', '♪', '?', '!'])); }
+        }
+      } else if (m === 'bug') {
+        toward(a, a.fly.x - a.w / 2, 1.4, k);
+        if (ground && Math.random() < 0.03 * k) a.v = 4;
+      } else if (m === 'spin') {
+        if (frame % 8 === 0) a.dir *= -1;
+        if (frame % 60 === 0) bubble(a, '♪');
+      } else if (m === 'sleep') { if (frame % 50 === 0) bubble(a, 'z'); }
+      else if (m === 'sick') { if (frame % 70 === 0) bubble(a, '💧'); }
+      else if (m === 'idle' && Math.random() < 0.004 * k) a.dir *= -1;
+      if (now > a.until && m !== 'held' && m !== 'fall') choose(a, all);
+    };
+
+    const drawMap = (def, x, bottom, s) => def.map.forEach((row, j) => [...row].forEach((ch, i) => {
+      const c = def.pal[ch];
+      if (!c) return;
+      ctx.fillStyle = c;
+      ctx.fillRect(Math.round(x + i * s), Math.round(bottom - (def.map.length - j) * s), s, s);
+    }));
+
+    const drawPet = (a, now) => {
+      const p = a.p, s = a.s, map = this.mapOf(p), w = map[0].length * s, h = map.length * s;
+      const blink = a.mode === 'sleep' || (now + a.seed) % 3500 < 150;
+      const squash = ['sit', 'sleep', 'sick'].includes(a.mode) ? 0.75 : a.mode === 'held' ? 1.08 : 1;
+      let bob = 0;
+      if (['walk', 'run', 'chase', 'ball', 'bug', 'meet'].includes(a.mode) && a.h === 0) bob = Math.floor(now / (a.mode === 'walk' ? 180 : 100)) % 2;
+      if (a.chew) bob = Math.floor(now / 250) % 2;
+      off.width = map[0].length; off.height = map.length;
+      octx.clearRect(0, 0, off.width, off.height);
+      this.drawSprite(octx, p, 0, 0, 1, { blink, flip: a.dir < 0 });
+      const dw = squash < 1 ? w * 1.1 : w * squash, dh = h * squash;
+      const jit = a.mode === 'sick' && frame % 4 < 2 ? 1 : 0;
+      const dx = Math.round(a.x + jit + (w - dw) / 2), dy = Math.round(GROUND - dh - a.h - bob);
+      // 影子：跳得越高越淡
+      ctx.globalAlpha = Math.max(0.05, 0.22 - a.h / 200); ctx.fillStyle = '#000';
+      ctx.fillRect(Math.round(a.x + 2), GROUND - 1, w - 4, 2); ctx.globalAlpha = 1;
+      ctx.drawImage(off, dx, dy, dw, dh);
+      a.box = { x: dx, y: dy, w: dw, h: dh };
+    };
+
+    const loop = now => {
+      requestAnimationFrame(loop);
+      const cfg = this.yardCfg(), panel = $('#pet-root');
+      const show = cfg.on && !(panel && !panel.hidden) && !document.hidden;
+      cv.style.display = show ? '' : 'none';
+      cv.style.bottom = (Number(cfg.bottom) || 0) + 'px';
+      if (!show) { prev = now; return; }
+      const k = Math.min(3, (now - (prev || now)) / 16.7);
+      prev = now; frame++;
+      if (!col || frame % 60 === 0) col = { g: cvar('accent2'), t: cvar('text') };
+
+      // 同步宠物：新来的加进来，走掉的移除，长大了换尺寸
+      const pets = this.yardPets();
+      for (const p of pets) {
+        let a = A.get(p.id);
+        if (!a) {
+          a = { p, x: R(0, Math.max(1, W - 40)), h: 0, v: 0, vx: 0, dir: 1, mode: 'idle', until: 0, seed: Math.random() * 3000 };
+          A.set(p.id, a);
+          if (!this.isMine(p)) bubble(a, '👋');
+        }
+        a.p = p; a.s = sizeOf(p); a.w = this.mapOf(p)[0].length * a.s;
+      }
+      for (const id of [...A.keys()]) if (!pets.some(p => p.id === id)) A.delete(id);
+      const all = [...A.values()];
+      bubbles = bubbles.filter(b => all.includes(b.a) && b.life > 0);
+
+      for (const a of all) update(a, k, now, all);
+      // 球
+      ball.v -= 0.3 * k; ball.h += ball.v * k;
+      if (ball.h <= 0) { ball.h = 0; ball.v = ball.v < -1.5 ? -ball.v * 0.5 : 0; ball.vx *= 0.9; }
+      ball.x += ball.vx * k; ball.vx *= 0.99;
+      if (ball.x < 4 || ball.x > W - 4) { ball.vx *= -1; ball.x = Math.max(4, Math.min(W - 4, ball.x)); }
+
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.imageSmoothingEnabled = false;
+      ctx.clearRect(0, 0, W, H);
+      const night = this.isNight();
+
+      if (cfg.scene) {
+        const pr = props();
+        ctx.fillStyle = col.g; ctx.fillRect(0, GROUND, W, H - GROUND);
+        for (let x = 11; x < W; x += 41) drawMap(YARD_PROPS.grass, x, GROUND, 2);
+        drawMap(YARD_PROPS.tree, pr.tree, GROUND, 3);
+        drawMap(YARD_PROPS.house, pr.house, GROUND, 3);
+        drawMap(YARD_PROPS.bowl, pr.bowl, GROUND, 2);
+        pr.flowers.forEach((x, i) => drawMap(i % 2 ? YARD_PROPS.flower2 : YARD_PROPS.flower, x, GROUND, 2));
+        // 自己在家的宠物拉的便便
+        const poop = Math.min(5, this.list.filter(p => this.isMine(p) && this.loc(p) === this.me()).reduce((s, p) => s + (p.poop || 0), 0));
+        ctx.fillStyle = '#7a4a20';
+        [0.38, 0.55, 0.72, 0.24, 0.9].slice(0, poop).forEach(f => {
+          const x = Math.round(W * f);
+          ctx.fillRect(x, GROUND - 4, 7, 4); ctx.fillRect(x + 1, GROUND - 7, 5, 3); ctx.fillRect(x + 2, GROUND - 9, 3, 2);
+        });
+      }
+      // 球
+      ctx.fillStyle = '#e04a3a'; ctx.beginPath(); ctx.arc(ball.x, GROUND - 4 - ball.h, 4, 0, 7); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.fillRect(Math.round(ball.x) - 1, Math.round(GROUND - 6 - ball.h), 2, 2);
+      // 白天蝴蝶，晚上萤火虫
+      for (const f of flies) {
+        f.ph += 0.05 * k; f.x += f.vx * k;
+        if (f.x < -10) f.x = W + 10; if (f.x > W + 10) f.x = -10;
+        const y = f.y + Math.sin(f.ph) * 8;
+        if (night) {
+          ctx.globalAlpha = 0.5 + Math.sin(f.ph * 3) * 0.4; ctx.fillStyle = '#f0f080';
+          ctx.fillRect(Math.round(f.x), Math.round(y), 2, 2); ctx.globalAlpha = 1;
+        } else {
+          const up = Math.floor(now / 120) % 2;
+          ctx.fillStyle = f.c;
+          ctx.fillRect(Math.round(f.x) - 2, Math.round(y) - (up ? 1 : 0), 2, 2);
+          ctx.fillRect(Math.round(f.x) + 1, Math.round(y) - (up ? 1 : 0), 2, 2);
+          ctx.fillStyle = '#3a3030'; ctx.fillRect(Math.round(f.x), Math.round(y), 1, 2);
+        }
+      }
+      for (const a of all) drawPet(a, now);
+      if (night && cfg.scene) { ctx.fillStyle = 'rgba(20,24,60,.22)'; ctx.fillRect(0, 0, W, H); }
+      // 头上的小气泡
+      ctx.textAlign = 'center';
+      for (const b of bubbles) {
+        if (!b.a.box) continue;
+        ctx.globalAlpha = Math.min(1, b.life * 1.5);
+        ctx.font = b.ch === 'z' ? 'bold 11px monospace' : '12px sans-serif';
+        ctx.fillStyle = col.t;
+        ctx.fillText(b.ch, b.a.box.x + b.a.box.w / 2 + (b.ch === 'z' ? 6 : 0), b.a.box.y - 3 - (1 - b.life) * 14);
+        b.life -= 0.012 * k;
+      }
+      ctx.globalAlpha = 1;
+    };
+    requestAnimationFrame(loop);
+
+    // ===== 点宠物打开面板，按住拖动可以拎起来甩 =====
+    const hitAt = (cx, cy) => {
+      if (cv.style.display === 'none') return null;
+      const r = cv.getBoundingClientRect();
+      return [...A.values()].reverse().find(a => a.box && cx >= r.left + a.box.x - 4 && cx <= r.left + a.box.x + a.box.w + 4
+        && cy >= r.top + a.box.y - 4 && cy <= r.top + a.box.y + a.box.h + 4) || null;
+    };
+    addEventListener('pointerdown', e => {
+      const a = hitAt(e.clientX, e.clientY);
+      if (!a) return;
+      e.preventDefault(); e.stopPropagation();
+      drag = { a, sx: e.clientX, sy: e.clientY, lx: e.clientX, vx: 0, moved: false };
+    }, true);
+    addEventListener('pointermove', e => {
+      if (!drag) return;
+      const { a } = drag;
+      if (!drag.moved && Math.hypot(e.clientX - drag.sx, e.clientY - drag.sy) < 6) return;
+      if (!drag.moved) { drag.moved = true; go(a, 'held', 1e9); bubble(a, '!'); }
+      const r = cv.getBoundingClientRect(), hh = this.mapOf(a.p).length * a.s;
+      a.x = Math.max(0, Math.min(W - a.w, e.clientX - r.left - a.w / 2));
+      a.h = Math.max(0, Math.min(H - hh - 8, GROUND - (e.clientY - r.top) - hh / 2));
+      drag.vx = e.clientX - drag.lx; drag.lx = e.clientX;
+    }, true);
+    const release = e => {
+      if (!drag) return;
+      e.stopPropagation();
+      const { a, moved, vx } = drag;
+      drag = null;
+      eatClick = true;
+      if (moved) { go(a, 'fall', 1e9, { vx: Math.max(-6, Math.min(6, vx * 0.6)) }); a.v = 1; return; }
+      this.curId = a.p.id;
+      this.renderPet();
+    };
+    addEventListener('pointerup', release, true);
+    addEventListener('pointercancel', release, true);
+    // 拎宠物时不让页面跟着滚，也不让底下的按钮收到这次点击
+    addEventListener('touchmove', e => { if (drag?.moved) e.preventDefault(); }, { passive: false, capture: true });
+    addEventListener('click', e => { if (eatClick) { eatClick = false; e.preventDefault(); e.stopPropagation(); } }, true);
+  },
+
+  async yardSettings() {
+    const c = this.yardCfg();
+    const a = await actionSheet([
+      { label: c.on ? '收起小院' : '显示小院', value: 'on' },
+      { label: c.scene ? '隐藏场景（只留宠物）' : '显示场景', value: 'scene' },
+      { label: `离屏幕底部的距离（现在 ${c.bottom || 0}px）`, value: 'bottom' },
+    ]);
+    if (!a) return;
+    if (a === 'on') c.on = !c.on;
+    if (a === 'scene') c.scene = !c.scene;
+    if (a === 'bottom') {
+      const v = Number(await editText('离底部多少像素（挡住输入框时调大，比如 60）', String(c.bottom || 0), false));
+      if (!(v >= 0)) return;
+      c.bottom = Math.round(v);
+    }
+    await saveSettings();
+    toast('已保存');
+  },
+
+  // ===== 串门 =====
+  hm: ts => new Date(ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false }),
+  notify(charId, text) { return addMsg(Conv.dm(activePid(), charId), 'user', text, 'sys'); },
+  pickHours() {
+    return actionSheet([{ label: '玩 1 小时', value: 1 }, { label: '玩 3 小时', value: 3 }, { label: '玩 8 小时', value: 8 }]);
+  },
+  startVisit(p, host, hours, by, text) {
+    p.visit = { host, until: Date.now() + hours * 3600e3, by };
+    p.lastVisit = Date.now();
+    this.log(p, by, text);
+  },
+  endVisit(p, who = 'sys', text = '') {
+    if (!p.visit) return;
+    const host = p.visit.host;
+    delete p.visit;
+    this.log(p, who, text || `在${this.who(host)}家玩够了，回家了`);
+  },
+  // 角色偶尔自己把宠物带来你家
+  maybeVisit(p) {
+    if (this.hasPersona(p) || this.loc(p) !== this.homeOf(p) || this.asleep(p) || p.sick) return;
+    if (Date.now() - (p.lastVisit || 0) < 6 * 3600e3 || Math.random() > 1 / 720) return;
+    const pid = activePid();
+    const c = this.charOwners(p).find(x => x.proactive !== false && knows(pid, x.id) && !getRel(pid, x.id).theyBlock);
+    if (!c) return;
+    this.startVisit(p, this.me(), 1 + Math.random(), c.id, `带它去${persona(pid).name}家玩`);
+    addMsg(Conv.dm(pid, c.id), c.id, `${c.name} 把「${p.name}」带来 ${persona(pid).name} 家玩了`, 'sys');
+  },
+  // 角色在聊天里发起串门：「名字|来」请别人的宠物来自己家，「名字|去」带自己的宠物去对方家
+  async charVisit(charId, spec, convId) {
+    const [a, b = '', c] = String(spec).split(/[|｜]/).map(x => x.trim());
+    const i = Conv.parse(convId), pid = i.pid;
+    if (!pid) return null;
+    const hours = Math.max(0.5, Math.min(12, Number(c) || 2));
+    const free = x => this.loc(x) === this.homeOf(x) && !x.sick;
+    const byName = list => list.find(x => a && (a.includes(x.name) || x.name.includes(a))) || (list.length === 1 ? list[0] : null);
+    const come = b.includes('来');
+    let p, host;
+    if (come) {
+      p = byName(this.list.filter(x => !x.owners.includes(charId) && free(x)
+        && x.owners.some(o => o.startsWith('p:') ? o === 'p:' + pid && knows(pid, charId) : knows(o, charId))));
+      host = charId;
+    } else {
+      p = byName(this.list.filter(x => x.owners.includes(charId) && free(x)));
+      host = i.type === 'cc' ? (charId === i.a ? i.b : i.a) : 'p:' + pid;
+    }
+    if (!p || host === this.homeOf(p)) return null;
+    this.startVisit(p, host, hours, charId, come ? '邀请它来家里玩' : `带它去${this.who(host)}家玩`);
+    await this.save();
+    return { sender: charId, type: 'sys', content: `${this.who(charId)}${come ? `邀请「${p.name}」来家里玩` : `带「${p.name}」去${this.who(host)}家玩`}（${hours}小时）` };
+  },
 
   fabPet() {
     return this.list.find(p => this.isMine(p)) || { sp: 'chick', color: 0, demo: true };
@@ -685,15 +1053,18 @@ const Pet = {
     this.stopAll(); this.view = 'list'; this.back = null;
     const vis = this.list.filter(p => this.visible(p));
     const row = p => `<button class="item" data-pid="${p.id}"><canvas class="pet-mini" width="36" height="36" data-mini="${p.id}"></canvas>
-      <div class="grow"><b>${esc(p.name)}</b><small class="ellipsis">${SPECIES[p.sp].name} · ${STAGES[this.stage(p)].n} · ${esc(this.ownerText(p))} · ${this.mood(p)}</small></div></button>`;
+      <div class="grow"><b>${esc(p.name)}</b><small class="ellipsis">${SPECIES[p.sp].name} · ${STAGES[this.stage(p)].n} · ${esc(this.ownerText(p))} · ${this.mood(p)}${this.loc(p) !== this.homeOf(p) ? ' · 在' + esc(this.hostName(this.loc(p))) + '家' : ''}</small>
+</div></button>`;
     const mine = vis.filter(p => this.isMine(p)), theirs = vis.filter(p => !this.isMine(p));
     const el = this.show(this.head('宠物', false) + `
       <h3>我养的</h3>${mine.map(row).join('') || '<p class="empty">还没有</p>'}
       <h3>角色们养的</h3>${theirs.map(row).join('') || '<p class="empty">还没有</p>'}
-      <button class="btn" data-pa="adopt" style="margin-top:8px">＋ 领养</button>`);
+            <button class="btn" data-pa="adopt" style="margin-top:8px">＋ 领养</button>
+      <button class="btn ghost" data-pa="yard" style="margin-top:8px">🌳 小院设置</button>`);
     $$('[data-mini]', el).forEach(c => this.drawMini(c, this.get(c.dataset.mini)));
     el.addEventListener('click', e => {
       if (e.target.closest('[data-pa="adopt"]')) return this.renderAdopt();
+      if (e.target.closest('[data-pa="yard"]')) return this.yardSettings();
       const it = e.target.closest('[data-pid]');
       if (it) { this.curId = it.dataset.pid; this.renderPet(); }
     });
@@ -710,6 +1081,12 @@ const Pet = {
       : `<button class="btn" data-do="feed">🍚 喂食</button><button class="btn" data-do="clean">🧹 铲屎</button>
          <button class="btn" data-do="bath">🛁 洗澡</button><button class="btn" data-do="pet">🤚 摸摸</button>
          ${p.sick ? '' : '<button class="btn" data-walk>🦮 遛弯</button>'}`;
+    const here = this.loc(p), away = here !== this.homeOf(p);
+    const visitBtn = away
+      ? `<p class="empty">现在在${esc(this.hostName(here))}家玩，${this.hm(p.visit.until)} 回来</p>
+         ${this.isMine(p) || here === this.me() ? `<button class="btn ghost" data-pa="home">🏠 ${this.isMine(p) ? '接它回家' : '送它回家'}</button>` : ''}`
+      : this.isMine(p) ? '<button class="btn ghost" data-pa="visit">🚪 送去串门</button>'
+      : can ? '<button class="btn ghost" data-pa="invite">💌 邀请来我家玩</button>' : '';
     const el = this.show(this.head(p.name) + `
       <canvas id="pet-stage" width="240" height="160" aria-label="${esc(p.name)}的小窝"></canvas>
       <p class="pet-mood" id="pet-mood"></p><div id="pet-bars"></div>
@@ -718,6 +1095,7 @@ const Pet = {
         <button class="btn ghost" data-game="catch">🍎 接食物</button><button class="btn ghost" data-game="run">🏃 跑酷</button>
         <button class="btn ghost" data-game="box">📦 推箱子</button><button class="btn ghost" data-game="monopoly">🎲 大富翁</button></div>`}`
                 : '<p class="empty">你还不认识它的主人，只能看看。</p>'}
+      ${visitBtn}
       ${cs.length && S.settings.claude.key ? '<button class="btn ghost" data-pa="show">📸 让主人晒一下</button>' : ''}
       <h3>动态</h3><div class="pet-log" id="pet-log"></div>
       <small>${esc(this.ownerText(p))}</small>
@@ -739,6 +1117,12 @@ const Pet = {
     const w = map[0].length, h = map.length;
     const s = Math.max(2, Math.round(Math.floor(100 / Math.max(w, h)) * STAGES[this.stage(p)].k));
     let x = (240 - w * s) / 2, dir = 1, lastFx = 0;
+    // 在同一个地方的其他宠物（自己的其他宠物、来串门的），一起在小窝里跑
+    const spot = this.loc(p);
+    const mates = this.list.filter(o => o !== p && this.loc(o) === spot).slice(0, 4).map(o => {
+      const om = this.mapOf(o), os = Math.max(2, Math.round(s * 0.75 * STAGES[this.stage(o)].k / STAGES[this.stage(p)].k));
+      return { o, s: os, w: om[0].length * os, h: om.length * os, x: 10 + Math.random() * 200, dir: Math.random() < 0.5 ? 1 : -1 };
+    });
     const t0 = performance.now();
     const loop = now => {
       const t = (now - t0) / 1000, sleeping = this.asleep(p);
@@ -751,6 +1135,16 @@ const Pet = {
       ctx.fillStyle = '#7a4a20';
       [14, 210, 40, 186, 66].slice(0, p.poop).forEach(px => { ctx.fillRect(px, 142, 10, 8); ctx.fillRect(px + 2, 136, 6, 6); ctx.fillRect(px + 3, 132, 3, 4); });
       this.drawSprite(ctx, p, Math.round(x), top, s, { blink: sleeping || t % 3 < 0.15, flip: dir < 0 });
+      for (const m of mates) {
+        const zzM = this.asleep(m.o);
+        if (!zzM && !m.o.sick) { m.x += m.dir * 0.4; if (m.x < 8 || m.x > 232 - m.w) m.dir *= -1; }
+        const mb = !zzM && Math.floor(t * 3 + m.w) % 2 ? 1 : 0;
+        this.drawSprite(ctx, m.o, Math.round(m.x), 150 - m.h - mb, m.s, { blink: zzM || (t + m.w) % 3 < 0.15, flip: m.dir < 0 });
+        if (Math.abs(m.x - x) < 20 && Math.floor(t * 2) % 4 === 0) {
+          ctx.font = '12px sans-serif'; ctx.textAlign = 'center'; ctx.fillStyle = '#e04a3a';
+          ctx.fillText('♥', (m.x + x + w * s) / 2, top - 4);
+        }
+      }
       if (sleeping) {
         ctx.fillStyle = 'rgba(20,24,60,.4)'; ctx.fillRect(0, 0, 240, 160);
         ctx.font = '18px sans-serif'; ctx.textAlign = 'center'; ctx.fillText('🌙', 216, 26);
@@ -781,6 +1175,38 @@ const Pet = {
       const g = e.target.closest('[data-game]')?.dataset.game;
       if (g) return this.renderGame(g);
       const a = e.target.closest('[data-pa]')?.dataset.pa;
+      if (a === 'visit') {
+        const pid = activePid();
+        const list = S.chars.filter(c => knows(pid, c.id) && !getRel(pid, c.id).theyBlock && !p.owners.includes(c.id));
+        if (!list.length) return toast('还没有认识的角色');
+        const c = await actionSheet(list.map(c => ({ label: `去${c.name}家`, value: c })));
+        if (!c) return;
+        const h = await this.pickHours();
+        if (!h) return;
+        this.startVisit(p, c.id, h, this.me(), `送它去${c.name}家玩`);
+        await this.save();
+        this.notify(c.id, `${persona(pid).name} 把「${p.name}」送到 ${c.name} 家玩 ${h} 小时`);
+        toast(`${p.name}去${c.name}家玩啦`);
+        return this.renderPet();
+      }
+      if (a === 'invite') {
+        const h = await this.pickHours();
+        if (!h) return;
+        const me = persona(activePid()).name;
+        this.startVisit(p, this.me(), h, this.me(), `邀请它去${me}家玩`);
+        await this.save();
+        for (const c of cs) this.notify(c.id, `${me} 邀请「${p.name}」来家里玩 ${h} 小时`);
+        toast(`${p.name}来你家玩啦，去小院看看`);
+        return this.renderPet();
+      }
+      if (a === 'home') {
+        const host = p.visit.host, mine = this.isMine(p);
+        this.endVisit(p, this.me(), mine ? `把它从${this.who(host)}家接回来了` : '把它送回了家');
+        await this.save();
+        if (mine && charById(host)) this.notify(host, `${persona(activePid()).name} 把「${p.name}」接回家了`);
+        if (!mine) for (const c of cs) this.notify(c.id, `${persona(activePid()).name} 把「${p.name}」送回家了`);
+        return this.renderPet();
+      }
       if (a === 'edit') this.renderAdopt(p);
       if (a === 'show') {
         const c = pick(cs);
