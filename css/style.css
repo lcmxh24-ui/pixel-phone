@@ -391,3 +391,8 @@ input,textarea,select,.inputbar textarea{font-size:max(16px,var(--fs))}
 /* ===== 角色：搜索 ===== */
 .char-tools{position:sticky;top:-10px;z-index:5;margin-bottom:0}
 .char-item[hidden],#char-none[hidden]{display:none}
+
+/* ===== 偷看：搜索 + 选人 ===== */
+.peek-tools{position:sticky;top:-10px;z-index:5;margin-bottom:0}
+.item[hidden],[data-sec][hidden],#peek-none[hidden],#pk-none[hidden]{display:none}
+.pk-list{max-height:50vh;overflow-y:auto;display:flex;flex-direction:column;gap:6px;margin-top:8px}
