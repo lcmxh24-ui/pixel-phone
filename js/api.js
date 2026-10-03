@@ -37,17 +37,29 @@ const API = {
     if (!noTemp && t !== '' && t != null && !isNaN(Number(t))) {
       body.temperature = Math.min(1, Math.max(0, Number(t)));
     }
-    for (let tryN = 0; ; tryN++) {
-      const r = await fetch(c.baseUrl.replace(/\/+$/, '') + '/v1/messages', {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          'x-api-key': c.key,
-          'anthropic-version': '2023-06-01',
-          'anthropic-dangerous-direct-browser-access': 'true',
-        },
-        body: JSON.stringify(body),
-      });
+        for (let tryN = 0; ; tryN++) {
+      // 超时保护：网页切到后台时请求可能被挂起，3 分钟没结果就当失败处理并记日志
+      const ac = new AbortController();
+      const timer = setTimeout(() => ac.abort(), 180e3);
+      let r;
+      try {
+        r = await fetch(c.baseUrl.replace(/\/+$/, '') + '/v1/messages', {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'x-api-key': c.key,
+            'anthropic-version': '2023-06-01',
+            'anthropic-dangerous-direct-browser-access': 'true',
+          },
+          body: JSON.stringify(body),
+          signal: ac.signal,
+        });
+      } catch (e) {
+        clearTimeout(timer);
+        if (e.name === 'AbortError') throw new Error('请求超时（网页可能被切到后台，浏览器暂停了请求）');
+        throw e;
+      }
+      clearTimeout(timer);
       const data = await r.json().catch(() => ({}));
       if (r.ok) {
         this.record(data.usage);

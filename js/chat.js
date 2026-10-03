@@ -9,7 +9,7 @@ const Gen = {
   // 逐条发出。at 有值时是离线补发，时间落在过去；否则模拟打字延迟实时发出
          async post(convId, items, { at = null, batch = uid() } = {}) {
     const ci = Conv.parse(convId);
-    let quoted = 0;
+        let quoted = 0, posted = 0;
     for (let i = 0; i < items.length; i++) {
       const ts = at ? Math.min(at + i * 15e3, Date.now() - (items.length - i) * 1000) : null;
       // 群里刚被踢出去的人，后面的话不再发出
@@ -34,8 +34,10 @@ const Gen = {
       }
       if (ts) extra.ts = ts;
       else await sleep(Math.min(500 + it.content.length * 60, 2500));
-      await addMsg(convId, it.sender, it.content, it.type, extra);
+            await addMsg(convId, it.sender, it.content, it.type, extra);
+      posted++;
     }
+    return posted;
   },
 
   async run(convId, at, fn) {
@@ -51,7 +53,7 @@ const Gen = {
     }
   },
 
-    dm(convId, { hint = '', at = null, proactive = false } = {}) {
+      dm(convId, { hint = '', at = null, proactive = false } = {}) {
     return this.run(convId, at, async () => {
       const { pid, charId } = Conv.parse(convId);
       const ch = charById(charId);
@@ -60,18 +62,22 @@ const Gen = {
       const blocked = getRel(pid, ch.id).theyBlock;
       if (blocked && proactive) return null;
       const { system, messages } = await Prompt.buildDM(ch, convId, { hint: blocked ? Prompt.blockedHint() : hint, at });
-      const r = Prompt.parseDM(await API.claude(system, messages), ch);
+      const raw = await API.claude(system, messages);
+      const r = Prompt.parseDM(raw, ch);
+      // 留一个可以点开看原因的小条。主动找人时没开口就什么都不留
+      const noReply = (content, kind) => proactive ? null
+        : this.post(convId, [{ sender: ch.id, type: 'ignore', content, extra: { kind } }], { at });
       if (blocked) {
-        if (!r.unblock) return r;
+        if (!r.unblock) { await noReply(r.skipWhy || r.ignore || '看到了，但还没消气', 'blocked'); return r; }
         await setRel(pid, ch.id, { theyBlock: false });
         Log.add(`${ch.name} 解除了对你的拉黑`, '');
       }
-      if (r.skip) return r;
+      if (r.skip) { await noReply(r.skipWhy || '没注意到手机', 'unseen'); return r; }
       if (r.ignore) {
-        // 主动找人时不会"已读不回"
-        if (!proactive) await this.post(convId, [{ sender: ch.id, type: 'ignore', content: r.ignore }], { at });
+        await noReply(r.ignore, r.ignoreKind);
       } else {
-        await this.post(convId, r.msgs.map(m => ({ sender: ch.id, ...m })), { at });
+        const n = await this.post(convId, r.msgs.map(m => ({ sender: ch.id, ...m })), { at });
+        if (!n) Log.add(`${ch.name} 的回复没有显示出来（解析后为空）`, raw.slice(0, 300));
       }
       if (r.block) {
         await setRel(pid, ch.id, { theyBlock: true });
@@ -99,9 +105,11 @@ const Gen = {
       if (!members.length) throw new Error('群里还没有角色');
       // 把主动提示和补发时间传给提示词
       const { system, messages } = await Prompt.buildGroup(g, convId, { hint, at });
-      const r = Prompt.parseLines(await API.claude(system, messages, { maxTokens: 1500 }), members.map(c => c.name), { cmds: true });
+            const raw = await API.claude(system, messages, { maxTokens: 1500 });
+      const r = Prompt.parseLines(raw, members.map(c => c.name), { cmds: true });
       const byName = n => members.find(c => c.name === n);
-      await this.post(convId, r.msgs.filter(m => byName(m.name)).map(m => ({ sender: byName(m.name).id, type: m.type, content: m.content, cmd: m.cmd, quote: m.quote })), { at });
+      const n = await this.post(convId, r.msgs.filter(m => byName(m.name)).map(m => ({ sender: byName(m.name).id, type: m.type, content: m.content, cmd: m.cmd, quote: m.quote })), { at });
+      if (!n) Log.add(`群「${g.name}」的回复没有显示出来`, raw.slice(0, 300));
       for (const it of r.intents) {
         const f = byName(it.from);
         if (f) await Social.queueIntent(g.personaId, f.id, it.to, it.reason);
@@ -118,8 +126,10 @@ const Gen = {
       // a 是发起人
       if (from === b.id || (!from && Math.random() < 0.5)) [a, b] = [b, a];
       const { system, messages } = await Prompt.buildCC(a, b, convId, { reason, at });
-      const r = Prompt.parseLines(await API.claude(system, messages, { maxTokens: 1500 }), [a.name, b.name]);
-      await this.post(convId, r.msgs.map(m => ({ sender: m.name === a.name ? a.id : b.id, type: m.type, content: m.content, quote: m.quote })), { at });
+            const raw = await API.claude(system, messages, { maxTokens: 1500 });
+      const r = Prompt.parseLines(raw, [a.name, b.name]);
+      const n = await this.post(convId, r.msgs.map(m => ({ sender: m.name === a.name ? a.id : b.id, type: m.type, content: m.content, quote: m.quote })), { at });
+      if (!n) Log.add(`${a.name}和${b.name}的私聊没有显示出来`, raw.slice(0, 300));
       const byName = n => [a, b].find(c => c.name === n);
       // 被朋友劝动了：解除对你的拉黑，然后主动来找你
       for (const n of r.unblocks) {
@@ -189,10 +199,17 @@ const ChatUI = {
    html(m, pid, meId, showName, prevTs) {
     const sep = !prevTs || m.ts - prevTs > 5 * 60e3 ? `<div class="tsep">${this.timeLabel(m.ts)}</div>` : '';
     const who = m.sender === 'user' ? persona(pid) : (charById(m.sender) || { name: '?' });
-    if (m.type === 'ignore') {
-      return sep + `<div class="ignore" data-ign><span>💤 ${esc(who.name)} 已读未回</span><div class="why">${esc(m.content)}</div></div>`;
+        if (m.type === 'ignore') {
+      const kind = { read: '已读没回', unseen: '没看消息', blocked: '拉黑中' }[m.kind] || '已读没回';
+      return sep + `<div class="ignore" data-ign role="button" tabindex="0" aria-label="${esc(who.name)}没有回复，点开看原因"><span>💤 ${esc(who.name)} ▾</span><div class="why">${kind}：${esc(m.content)}</div></div>`;
     }
     if (m.type === 'sys') return sep + `<div class="tsep">${esc(m.content)}</div>`;
+        if (m.type === 'offline') {
+      const ns = (m.members || []).map(id => charById(id)?.name).filter(Boolean);
+      return sep + `<div class="offline" data-id="${m.id}">
+        <div class="off-h">📍 线下 · ${this.timeLabel(m.ts)}${ns.length > 1 ? ' · 在场：' + esc(ns.join('、')) : ''}${m.by === 'user' ? ' · 我写的' : ''}</div>
+        <div class="off-b" data-bubble role="button" tabindex="0">${esc(m.content).replace(/\n/g, '<br>')}</div></div>`;
+    }
     const mine = m.sender === meId;
     const sec = Math.max(1, Math.ceil(m.content.length / 4));
     const body = m.type === 'voice'
@@ -261,8 +278,9 @@ Views.chat = async ({ convId }) => {
   if (!langOpts.includes(autoLang)) autoLang = '';
   const langBtn = langOpts.length
     ? `<button class="btn ${autoLang ? '' : 'ghost'}" data-act="autolang" aria-pressed="${!!autoLang}" aria-label="我的消息在对方看来的语言">译${autoLang ? '✓' : ''}</button>` : '';
-  const right = (langBtn || isG)
-    ? `<span class="flex" style="gap:4px;flex-wrap:nowrap">${langBtn}${isG ? '<button class="btn ghost" data-act="gset" aria-label="群设置">⚙</button>' : ''}</span>` : '';
+    const offBtn = i.type === 'dm' ? '<button class="btn ghost" data-act="offline" aria-label="线下剧情">线下</button>' : '';
+  const right = (langBtn || isG || offBtn)
+    ? `<span class="flex" style="gap:4px;flex-wrap:nowrap">${offBtn}${langBtn}${isG ? '<button class="btn ghost" data-act="gset" aria-label="群设置">⚙</button>' : ''}</span>` : '';
   const typingText = isCC ? '他们正在聊…' : isG ? '有人正在输入…' : '对方正在输入…';
     const bottom = isCC
     ? `<div class="peekbar"><span>👀 你在偷看，他们不知道</span><button class="btn" data-act="more">让他们继续聊</button></div>`
@@ -304,6 +322,7 @@ Views.chat = async ({ convId }) => {
     if (a === 'unquote') return ChatUI.setQuote(null);
     if (a === 'media') return Media.pick(convId);
     if (a === 'gset') return Router.go('groupEdit', { gid: i.gid });
+    if (a === 'offline') return Offline.open(convId);
        if (a === 'autolang') {
       let next = '';
       if (!isG && langOpts.length === 1) next = autoLang ? '' : langOpts[0];
@@ -352,6 +371,7 @@ Views.peekView = p => Views.chat(p);
 
 async function msgActions(m) {
   if (!m) return;
+  if (m.type === 'offline') return Offline.actions(m);
   if (await Wallet.tap(m)) return;
   if (await Pet.tapInvite(m)) return;
   const items = [{ label: '复制', value: 'copy' }, { label: '编辑', value: 'edit' }];
@@ -363,7 +383,7 @@ async function msgActions(m) {
     if (Lang.sentAs(m)) items.splice(1, 0, { label: '这条在对方看来改回原文', value: 'raw' });
     else lopts.forEach(L => items.splice(1, 0, { label: `这条在对方看来是${L}`, value: 'as:' + L }));
   }
-  if (m.sender !== 'user') items.push({ label: '重新生成这一轮', value: 'regen' });
+   if (m.sender !== 'user' && m.type !== 'offline') items.push({ label: '重新生成这一轮', value: 'regen' });
   items.push({ label: '删除', value: 'del', danger: true });
     if (m.url) items.unshift(...Media.actions(m));
   const a = await actionSheet(items);
@@ -811,6 +831,160 @@ ${o.persona || '（无）'}
     S.groups.push(g);
     await addMsg(Conv.g(g.id), o.id, `${o.name} 创建了群聊「${name}」`, 'sys', at ? { ts: at } : {});
     return { g, owner: o, reason: String(obj.reason || '') };
+  },
+};
+
+// ===== 线下模式：在某个时间点插入一段线下剧情（AI 写或自己写），可以多人在场 =====
+const Offline = {
+  open(convId) {
+    const { pid, charId } = Conv.parse(convId);
+    const main = charById(charId);
+    if (!main) return;
+    const others = S.chars.filter(c => c.id !== main.id);
+    const d = new Date();
+    const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    const tip = { ai: '剧情方向（可以留空，AI 会参考聊天记录）', me: '发生了什么' };
+    const { el, close } = modal(`<h3>线下 · 和${esc(main.name)}</h3>
+      <label class="field"><span>今天几点发生的</span><input type="time" id="off-t" value="${hm}"></label>
+      <div class="field"><span>还有谁在场（可多选，不选就是只有你们俩）</span>
+        ${others.length ? `<input type="search" id="off-q" placeholder="搜索名字" aria-label="搜索角色">
+        <div class="flex" style="gap:6px;margin:6px 0">
+          <button class="btn ghost sm" data-s="all">全选结果</button>
+          <button class="btn ghost sm" data-s="none">清除</button>
+          <small id="off-n" class="grow" style="text-align:right">已选 0 人</small></div>
+        <div class="off-list">${others.map(c => `<label class="row" data-name="${esc(c.name.toLowerCase())}">
+          <span class="flex" style="gap:6px">${avatar(c.avatar, c.name, 'sm')}${esc(c.name)}${knows(pid, c.id) ? '' : '<small>（和你不认识）</small>'}</span>
+          <input type="checkbox" data-pc="${c.id}" aria-label="${esc(c.name)}在场"></label>`).join('')}</div>`
+        : '<small>没有其他角色</small>'}
+      </div>
+      <div class="flex" style="gap:6px;margin:6px 0">
+        <button class="btn" data-m="ai" aria-pressed="true">AI 写</button>
+        <button class="btn ghost" data-m="me" aria-pressed="false">我自己写</button></div>
+      <label class="field"><span id="off-l">${tip.ai}</span>
+        <textarea id="off-c" rows="6" placeholder="比如：一起去吃了之前说的那家火锅"></textarea></label>
+      <div class="flex" style="justify-content:flex-end;gap:6px;margin-top:10px">
+        <button class="btn ghost" data-a="no">取消</button><button class="btn" data-a="ok">确定</button></div>`);
+
+    const rows = $$('[data-name]', el);
+    const picked = () => $$('[data-pc]', el).filter(x => x.checked).map(x => x.dataset.pc);
+    const sync = () => { const n = $('#off-n', el); if (n) n.textContent = `已选 ${picked().length} 人`; };
+    // 搜索只是筛选显示，已勾选的人即使被筛掉也保留
+    const q = $('#off-q', el);
+    if (q) q.oninput = () => {
+      const terms = q.value.toLowerCase().split(/\s+/).filter(Boolean);
+      rows.forEach(r => { r.hidden = !terms.every(t => r.dataset.name.includes(t)); });
+    };
+    el.onchange = e => { if (e.target.matches('[data-pc]')) sync(); };
+
+    let mode = 'ai';
+    el.onclick = e => {
+      const s = e.target.closest('[data-s]')?.dataset.s;
+      if (s === 'all') { rows.filter(r => !r.hidden).forEach(r => { $('[data-pc]', r).checked = true; }); return sync(); }
+      if (s === 'none') { $$('[data-pc]', el).forEach(x => { x.checked = false; }); return sync(); }
+      const mb = e.target.closest('[data-m]');
+      if (mb) {
+        mode = mb.dataset.m;
+        $$('[data-m]', el).forEach(b => {
+          const on = b.dataset.m === mode;
+          b.classList.toggle('ghost', !on);
+          b.setAttribute('aria-pressed', on);
+        });
+        $('#off-l', el).textContent = tip[mode];
+        return;
+      }
+      const a = e.target.closest('[data-a]')?.dataset.a;
+      if (a === 'no') return close();
+      if (a !== 'ok') return;
+      const t = $('#off-t', el).value, text = $('#off-c', el).value.trim();
+      if (!t) return toast('选一下时间');
+      const [h, mi] = t.split(':').map(Number);
+      const ts = new Date().setHours(h, mi, 0, 0);
+      if (ts > Date.now()) return toast('这个时间还没到');
+      if (mode === 'me' && !text) return toast('写一下发生了什么');
+      const ids = [main.id, ...picked()];
+      close();
+      if (mode === 'me') return this.save(convId, 'user', text, ts, 'user', ids);
+      this.gen(convId, ids.map(charById).filter(Boolean), ts, text);
+    };
+  },
+
+  // 每个在场角色的私聊里各放一份，scene 相同。memDone 表示记忆已单独写过，普通总结会跳过
+  async save(convId, sender, content, ts, by, ids) {
+    const pid = Conv.parse(convId).pid, scene = uid();
+    const extra = { ts, savedAt: Date.now(), by, members: ids, scene, memDone: true };
+    for (const id of ids) await addMsg(Conv.dm(pid, id), sender, content, 'offline', extra);
+    this.remember(pid, ids, content, ts, scene).catch(e => Log.add('线下剧情写入记忆失败', e.message));
+  },
+
+  gen(convId, chars, ts, hint) {
+    if (Gen.busy.has(convId)) return toast('正在生成中');
+    toast('正在写线下剧情…', 3000);
+    return Gen.run(convId, null, async () => {
+      const { system, messages } = await Prompt.buildOffline(chars, convId, ts, hint);
+      const text = await API.claude(system, messages, { maxTokens: 1500 + 300 * (chars.length - 1) });
+      if (!text) throw new Error('AI 没有写出线下剧情');
+      await this.save(convId, chars[0].id, text, ts, 'ai', chars.map(c => c.id));
+    });
+  },
+
+  // 一次调用给所有在场角色写记忆，记忆来源标上 scene，方便之后一起改、一起删
+  async remember(pid, ids, text, ts, scene) {
+    const chars = ids.map(charById).filter(Boolean);
+    if (!chars.length || !S.settings.claude.key) return;
+    const names = chars.map(c => c.name), pname = persona(pid).name;
+    const system = `你是记忆整理助手。下面是一段线下见面的经过（在场：${[pname, ...names].join('、')}）。分别从 ${names.join('、')} 各自的视角，提炼值得长期记住的信息。
+要求：
+1. 每条记忆是一句完整、独立的陈述，写清楚在场的人和发生了什么，不用指代不明的代词。
+2. 分级：important（关系变化、约定、重要事件、强烈情绪）；normal（一般细节）。
+3. 每人 1 到 4 条，只写这个人亲身经历、看到听到的。
+4. 只输出 JSON，键名必须是：${names.join('、')}。格式：{"名字":[{"text":"...","level":"normal"}]}`;
+    const out = await API.claude(system, [{ role: 'user', content: `时间：${nowText(ts)}\n\n${text}` }],
+      { temperature: 0.3, maxTokens: Math.min(4000, 400 + 400 * chars.length) });
+    const obj = Memory.parseJSON(out);
+    for (const c of chars) {
+      for (const it of (obj[c.name] || [])) {
+        if (it?.text) await Memory.add(c.id, pid, it.text, it.level === 'important' ? 'important' : 'normal', 'offline:' + scene);
+      }
+    }
+  },
+
+  // 同一段剧情在所有人私聊里的副本
+  async copies(m) {
+    if (!m.scene) return [m];
+    const pid = Conv.parse(m.convId).pid, out = [];
+    for (const id of m.members || []) out.push(...(await getMsgs(Conv.dm(pid, id))).filter(x => x.scene === m.scene));
+    return out;
+  },
+  async forget(m) {
+    if (!m.scene) return;
+    for (const id of m.members || []) {
+      for (const x of await DB.byIndex('mems', 'charId', id)) if (x.source === 'offline:' + m.scene) await DB.del('mems', x.id);
+    }
+  },
+
+  async actions(m) {
+    const multi = (m.members || []).length > 1;
+    const a = await actionSheet([
+      { label: '复制', value: 'copy' },
+      { label: multi ? '编辑（所有人那里一起改）' : '编辑', value: 'edit' },
+      { label: multi ? '删除（所有人那里一起删）' : '删除', value: 'del', danger: true },
+    ]);
+    if (a === 'copy') { await navigator.clipboard?.writeText(m.content); toast('已复制'); }
+    if (a === 'edit') {
+      const t = (await editText('编辑线下剧情', m.content))?.trim();
+      if (!t) return;
+      for (const x of await this.copies(m)) { x.content = t; await DB.put('msgs', x); }
+      // 记忆跟着重写
+      await this.forget(m);
+      if (m.scene) this.remember(Conv.parse(m.convId).pid, m.members, t, m.ts, m.scene).catch(e => Log.add('线下剧情写入记忆失败', e.message));
+      ChatUI.refresh();
+    }
+    if (a === 'del') {
+      if (!await confirmBox('删除这段线下剧情（相关记忆一起删除）')) return;
+      for (const x of await this.copies(m)) await DB.del('msgs', x.id);
+      await this.forget(m);
+      ChatUI.refresh();
+    }
   },
 };
 

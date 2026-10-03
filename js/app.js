@@ -712,7 +712,7 @@ Views.me = async () => {
 };
 
 // ===== 预设：条目式注入 =====
-const SCOPES = { all: '通用', dm: '单聊', group: '群聊' };
+const SCOPES = { all: '通用', dm: '单聊', group: '群聊', offline: '线下' };
 Views.preset = async () => {
   const es = S.settings.entries;
   screen().innerHTML = topbar('预设', '<button class="btn ghost" data-act="add" aria-label="新建条目">＋</button>') + `<div class="body">
@@ -1065,6 +1065,10 @@ async function boot() {
     es.splice(i < 0 ? es.length : i + 1, 0,
       { id: uid(), name: '所在地与时差', enabled: true, scope: 'all', position: 'system', role: 'user', depth: 0, content: '【所在地与时差】\n{{所在地}}' });
     S.settings.geoPatched = true;
+    await saveSettings();
+  }
+  if (!S.settings.entries.some(e => e.scope === 'offline')) {
+    S.settings.entries.push(...OFFLINE_ENTRIES());
     await saveSettings();
   }
   await API.loadStats();

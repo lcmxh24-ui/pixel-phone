@@ -344,7 +344,7 @@ const Moments = {
     let out;
     try {
       out = await API.claude(system, [{ role: 'user', content: `现在是${nowText(at || Date.now())}。${Weather.text()}${topic ? '\n' + topic : ''}` }], { maxTokens: 500 });
-    } catch (e) { console.warn(e); return null; }
+        } catch (e) { Log.add('发朋友圈失败', e.message); return null; }
     const text = [], trans = [], images = [];
     for (const l of out.split('\n').map(s => s.trim()).filter(Boolean)) {
       const m = l.match(/^\[图片\]\s*(.+)$/);

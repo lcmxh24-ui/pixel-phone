@@ -61,6 +61,28 @@ const DEFAULT_ENTRIES = () => {
     e('当前时间', 'all', '现在是{{时间}}。\n{{天气}}'),
     e('格式提醒：单聊', 'dm', '（以{{角色}}的身份回复。只写消息，不写旁白和动作。别复述人设里的例句，注意消息之间隔了多久。）', 'depth', 0),
     e('格式提醒：群聊', 'group', '（按格式输出接下来的群聊消息，不要替{{用户}}说话。注意消息之间隔了多久。）', 'depth', 0),
+    ...OFFLINE_ENTRIES(),
+  ];
+
+};
+// 线下模式专用预设。只在写线下剧情时使用，不影响单聊和群聊
+const OFFLINE_ENTRIES = () => {
+  const e = (name, content) => ({ id: uid(), name, enabled: true, scope: 'offline', position: 'system', role: 'user', depth: 0, content });
+  return [
+    e('主提示：线下', `你要写一段{{用户}}和{{角色}}在现实里见面时发生的短剧情。
+- 剧情发生在{{时间}}。参考线上聊天记录里的约定和话题，要和之前聊过的内容衔接，不能和已知的事实矛盾。
+- 用第三人称叙述，可以写动作、神态、环境和对话。
+- 300 到 600 字，写一个完整的小片段，自然收尾，不要写成长篇。
+- {{用户}}的言行少写、写得克制，不写{{用户}}的心理，不替{{用户}}做重要决定。
+- 不要凭空制造大事件（表白、吵架、受伤、意外之类），除非聊天记录里已经有铺垫，或者剧情方向里写了。
+- 只输出剧情正文，不加标题和说明。`),
+    e('线下：角色设定', '【{{角色}}的设定】\n{{角色设定}}'),
+    e('线下：用户设定', '【{{用户}}的设定】\n{{用户设定}}'),
+    e('线下：关系', '【两人的关系】\n{{关系}}'),
+    e('线下：世界书', '【世界设定】\n{{世界书}}'),
+    e('线下：世界书触发', '【相关设定】\n{{世界书触发}}'),
+    e('线下：记忆', '{{记忆}}'),
+    e('线下：时间', '剧情发生的时间：{{时间}}。\n{{天气}}'),
   ];
 };
 
@@ -150,8 +172,9 @@ const Prompt = {
       // list 有值时带上消息编号和引用，给群聊、私聊、共读用
   line(m, pid, list = null) {
     const n = senderName(m, pid);
-    if (m.type === 'ignore') return `（${n}已读未回：${m.content}）`;
+        if (m.type === 'ignore') return this.ignoreText(m, n);
     if (m.type === 'sys') return `（${m.content}）`;
+       if (m.type === 'offline') return this.offlineText(m, pid);
     const sa = Lang.sentAs(m);
     const head = list ? `[#${Quote.code(m)}] ` : '', ref = list ? Quote.ref(m, list, pid) : '';
     return `${head}${n}：${ref}${Lang.body(m, pid)}${sa ? `（实际是用${sa}发的）` : ''}`;
@@ -200,7 +223,10 @@ const Prompt = {
 
       dmRules(known, invGroups = [], blocked = false, iBlocked = false) {
     const r = ['【功能格式】（必须遵守）', '- 每条消息单独一行，不要在消息前加名字。', '- 发语音：单独一行写 [语音]语音里说的话'];
-    if (S.settings.chat.allowIgnore) r.push('- 已读不回：只有当{{角色}}此刻确实不会回复时（在忙、睡着了、在生气、故意晾着对方等），整段回复只写一行 [不回]原因。原因用旁观者视角简短描述，比如：在开会，瞄了一眼手机又放下了。大部分时候应该正常回复。');
+        if (S.settings.chat.allowIgnore) r.push(`- 不回复：只有当{{角色}}此刻确实不会回复时才用，整段回复只写一行，大部分时候应该正常回复。分两种：
+  · 看了但不回（在忙顾不上、在生气、故意晾着对方等）：[不回]原因
+  · 根本没看到消息（睡着了、手机没电、在开车、静音没注意等）：[没看]原因
+  原因用旁观者视角简短描述，比如：[不回]在开会，瞄了一眼手机又放下了 / [没看]已经睡着了，手机扣在床头`);
     if (known) r.push(`- 私下找别人：如果聊到的内容让{{角色}}想私下联系某个认识的人（包括请对方帮忙说情、传话），另起一行写 [私聊]对方名字：想找对方聊的原因。这一行对方看不到。可以找的人：${known}。不要频繁使用。`);
     if (invGroups.length) r.push(`- 拉{{用户}}进群：{{用户}}现在不在这些群里，{{角色}}是群主或管理员，能把{{用户}}拉进去：${invGroups.join('、')}。只有{{用户}}想进、而且{{角色}}愿意，或者{{角色}}自己想拉的时候才用，单独一行写 [拉进群]群名。`);
     if (!blocked) r.push('- 拉黑：极少使用。只有{{角色}}被惹到极点、真的不想再收到{{用户}}的消息时，在最后单独一行写 [拉黑]。拉黑后{{角色}}还能看到{{用户}}的消息，但不会回复。');
@@ -219,10 +245,14 @@ const Prompt = {
   },
 
   // 角色拉黑了你时，用这段代替正常回复
-  blockedHint() {
-    return '（{{角色}}之前把{{用户}}拉黑了。拉黑后{{角色}}仍然能看到{{用户}}发来的消息，但不会回复。根据这些消息和{{角色}}的性格判断：如果{{角色}}气消了、心软了，或者确实有必要回，第一行写 [解除拉黑]，后面接着写要发的消息；否则只输出 [不发]。）';
+   blockedHint() {
+    return '（{{角色}}之前把{{用户}}拉黑了。拉黑后{{角色}}仍然能看到{{用户}}发来的消息，但不会回复。根据这些消息和{{角色}}的性格判断：如果{{角色}}气消了、心软了，或者确实有必要回，第一行写 [解除拉黑]，后面接着写要发的消息；否则只输出一行 [不发]原因，原因用旁观者视角简短描述，比如：[不发]看到了，冷笑一声把手机扔到一边。）';
   },
-
+  // 没回复的几种情况：read 看了没回，unseen 没看到，blocked 拉黑中看了没回
+  IGNORE_KIND: { read: '看了消息但没回', unseen: '没看到消息', blocked: '还在拉黑中，看了没回' },
+  ignoreText(m, name) {
+    return `（${name}当时${this.IGNORE_KIND[m.kind] || this.IGNORE_KIND.read}：${m.content}）`;
+  },
   normalize(msgs) {
     const merged = [];
     for (const m of msgs) {
@@ -234,6 +264,50 @@ const Prompt = {
     if (!merged.length || merged[0].role !== 'user') merged.unshift({ role: 'user', content: '（开始聊天）' });
     if (merged.at(-1).role !== 'user') merged.push({ role: 'user', content: '（继续）' });
     return merged;
+  },
+    // 线下剧情：只用作用范围为「线下」的预设。chars[0] 是当前私聊的角色，其余是一起在场的
+  async buildOffline(chars, convId, ts, hint = '') {
+    const { pid } = Conv.parse(convId);
+    const ids = chars.map(c => c.id), names = chars.map(c => c.name), multi = chars.length > 1;
+    const before = (await getMsgs(convId)).filter(m => m.ts <= ts).slice(-30);
+    const query = [hint, ...before.slice(-6).map(m => m.content)].join('\n');
+    const mem = [];
+    for (const c of chars) { const t = await Memory.retrieveText(c.id, pid, query, c.name); if (t) mem.push(t); }
+    const wb = WB.build(ids, WB.scan(before) + '\n' + hint);
+    const vars = {
+      ...this.baseVars(pid, ts),
+      角色: names.join('、'), char: names.join('、'),
+      角色设定: multi ? chars.map(c => `· ${c.name}：${c.persona || '（无）'}`).join('\n\n') : (chars[0].persona || ''),
+      记忆: mem.join('\n\n'),
+      关系: this.relationsText(chars, pid),
+      世界书: wb.constant, 世界书触发: wb.triggered,
+    };
+    vars.char_persona = vars.角色设定;
+    vars.memory = vars.记忆;
+    const system = S.settings.entries
+      .filter(e => e.enabled && e.scope === 'offline' && e.position === 'system')
+      .map(e => this.render(e, vars)).filter(Boolean).join('\n\n');
+    const log = before.map((m, k) => {
+      const gap = this.gapNote(before[k - 1], m);
+      return (gap ? gap + '\n' : '') + `[${ChatUI.timeLabel(m.ts)}] ${this.line(m, pid)}`;
+    }).join('\n');
+    // 其他在场的人最近 24 小时的聊天，让他们的表现能接上
+    const rec = multi ? await this.recentMulti(chars.slice(1), pid, convId) : '';
+    const task = [
+      log && `【${persona(pid).name}和${names[0]}的线上聊天记录】\n` + log,
+      rec && '【其他在场的人最近的聊天】\n' + rec,
+      multi && `【在场的人】${persona(pid).name}、${names.join('、')}。每个人都要有符合自己性格的表现，戏份不用一样多。`,
+      hint && '【这段剧情大概是】\n' + hint,
+      `请写出${nowText(ts)}发生的线下剧情。`,
+    ].filter(Boolean).join('\n\n');
+    return { system, messages: [{ role: 'user', content: task }] };
+  },
+
+  // 给 AI 看的线下剧情，带上在场的人
+  offlineText(m, pid) {
+    const ids = m.members || [Conv.parse(m.convId).charId];
+    const who = [persona(pid).name, ...ids.map(id => charById(id)?.name).filter(Boolean)];
+    return `（${nowText(m.ts)}，线下见面，在场：${[...new Set(who)].join('、')}。当时的经过：${m.content}）`;
   },
 
     async buildDM(ch, convId, { hint = '', at = null } = {}) {
@@ -274,8 +348,9 @@ const Prompt = {
       const gap = this.gapNote(hist[k - 1], m);
       if (gap) msgs.push({ role: 'user', content: gap });
             msgs.push(m.type === 'ignore'
-        ? { role: 'user', content: `（${ch.name}当时已读未回：${m.content}）` }
+                ? { role: 'user', content: this.ignoreText(m, ch.name) }
         : m.type === 'sys' ? { role: 'user', content: `（${m.content}）` }
+               : m.type === 'offline' ? { role: 'user', content: this.offlineText(m, pid) }
                              : { role: m.sender === 'user' ? 'user' : 'assistant',
             content: `[#${Quote.code(m)}] ${Quote.ref(m, all, pid)}` +
               (Lang.sentAs(m) ? `${Lang.body(m, pid)}（${p.name}这条实际是用${Lang.sentAs(m)}发的）` : Lang.body(m, pid)) });
@@ -406,16 +481,17 @@ ${Quote.RULE}
   // 单聊输出：普通消息 / [语音] / [不回] / [不发] / [私聊]
   parseDM(text, ch) {
     const nameRe = new RegExp('^[【\\[]?' + escRe(ch.name) + '[】\\]]?\\s*[:：]\\s*');
-    const out = { msgs: [], intents: [], invites: [], ignore: null, skip: false, block: false, unblock: false };
+        const out = { msgs: [], intents: [], invites: [], ignore: null, ignoreKind: 'read', skip: false, skipWhy: '', block: false, unblock: false };
     for (let l of String(text).split(/\n+/)) {
       l = l.trim().replace(Quote.TAG, '').replace(nameRe, '').replace(Quote.TAG, '');
       if (!l || /^[-—*_=]{3,}$/.test(l)) continue;
       let m;
-      if (/^\[不发\]/.test(l)) { out.skip = true; continue; }
+            if ((m = l.match(/^\[不发\]\s*(.*)$/))) { out.skip = true; out.skipWhy = m[1].trim(); continue; }
       if (/^\[解除拉黑\]/.test(l)) { out.unblock = true; continue; }
       if (/^\[拉黑\]/.test(l)) { out.block = true; continue; }
       if ((m = l.match(/^\[拉进群\]\s*(.+)$/))) { out.invites.push(m[1].trim()); continue; }
-      if ((m = l.match(/^\[不回\]\s*(.*)$/))) { out.ignore = m[1].trim() || '看了一眼，没有回'; continue; }
+            if ((m = l.match(/^\[不回\]\s*(.*)$/))) { out.ignore = m[1].trim() || '看了一眼，没有回'; out.ignoreKind = 'read'; continue; }
+      if ((m = l.match(/^\[没看\]\s*(.*)$/))) { out.ignore = m[1].trim() || '没注意到手机'; out.ignoreKind = 'unseen'; continue; }
       if ((m = l.match(/^\[私聊\]\s*(.+?)\s*[:：]\s*(.+)$/))) { out.intents.push({ to: m[1].replace(/^@/, ''), reason: m[2] }); continue; }
             const q = Quote.take(l);
       out.msgs.push({ ...this.typed(q.rest), ...(q.code ? { quote: q.code } : {}) });

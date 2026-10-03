@@ -3,6 +3,8 @@ const Memory = {
   _busy: {},
   _q: { text: null, vec: null },
   CHUNK: 80, // 每次总结最多处理的消息条数
+  // 消息的"进度时间"：插在过去的线下剧情按写入时间算
+  mt: m => Math.max(m.ts, m.savedAt || 0),
 
   // 本地向量：中文单字 + 双字哈希，未配置向量接口或接口失败时使用
   localVec(text) {
@@ -134,7 +136,7 @@ const Memory = {
 
   async pendingCount(convId) {
     const st = await this.state(convId);
-    return (await getMsgs(convId)).filter(m => m.ts > st.lastTs).length;
+       return (await getMsgs(convId)).filter(m => this.mt(m) > st.lastTs).length;
   },
 
   // 单聊/群聊：按你发的消息数计轮；角色间私聊：满 6 条就总结。每次最多处理 CHUNK 条
@@ -143,7 +145,7 @@ const Memory = {
     const chars = Conv.members(convId);
     if (!chars.length || !info.pid) return 0;
     const st = await this.state(convId);
-    const pending = (await getMsgs(convId)).filter(m => m.ts > st.lastTs);
+        const pending = (await getMsgs(convId)).filter(m => this.mt(m) > st.lastTs);
     if (!pending.length) return 0;
     const every = Number(S.settings.memory.every) || 10;
     const userN = pending.filter(m => m.sender === 'user').length;
@@ -157,7 +159,16 @@ const Memory = {
     const pname = persona(info.pid).name;
     const kind = { dm: `${names[0]}和${pname}的私聊`, g: `群聊「${info.group?.name}」`, cc: `${names.join('和')}之间的私聊`, r: Conv.label(convId, info.pid) }[info.type];
     try {
-      const log = msgs.map(m => Prompt.line(m, info.pid)).join('\n');
+            // 全部处理完时按最晚的进度时间记；没处理完就按这一批最后一条
+      const lastTs = msgs.length < pending.length ? msgs.at(-1).ts : Math.max(...msgs.map(m => this.mt(m)));
+      // 线下剧情已经单独写过记忆，这里跳过
+      const useful = msgs.filter(m => !m.memDone);
+      if (!useful.length) {
+        Object.assign(st, { lastTs, fails: 0, lastError: '' });
+        await DB.put('kv', st);
+        return 0;
+      }
+      const log = useful.map(m => Prompt.line(m, info.pid)).join('\n');
       const system = `你是记忆整理助手。阅读一段手机聊天记录（${kind}），分别从 ${names.join('、')} 各自的视角，提炼值得长期记住的信息。
 要求：
 1. 每条记忆是一句完整、独立的陈述，写清楚是谁、做了什么或说了什么，不用指代不明的代词。
@@ -185,7 +196,8 @@ const Memory = {
           total++;
         }
       }
-      Object.assign(st, { lastTs: msgs.at(-1).ts, fails: 0, lastError: '' });
+            // 全部处理完时按最晚的进度时间记；没处理完就按这一批最后一条，免得跳过后面的消息
+      Object.assign(st, { lastTs, fails: 0, lastError: '' });
       await DB.put('kv', st);
       return total;
     } catch (e) {

@@ -95,11 +95,22 @@ Describe only what is visible: subject, setting, lighting, colors, mood. No styl
     // 模式二：OpenAI 兼容 /images/generations
     let extra = {};
     try { extra = c.extra ? JSON.parse(c.extra) : {}; } catch { toast('生图额外参数不是合法 JSON，已忽略'); }
-    const r = await fetch(c.url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...(c.key ? { Authorization: 'Bearer ' + c.key } : {}) },
-      body: JSON.stringify({ model: c.model, prompt, n: 1, ...extra }),
-    });
+        // 2 分钟没出图就当失败，免得一直卡着
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), 120e3);
+    let r;
+    try {
+      r = await fetch(c.url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(c.key ? { Authorization: 'Bearer ' + c.key } : {}) },
+        body: JSON.stringify({ model: c.model, prompt, n: 1, ...extra }),
+        signal: ac.signal,
+      });
+    } catch (e) {
+      throw new Error(e.name === 'AbortError' ? '生图超时（超过 2 分钟）' : e.message);
+    } finally {
+      clearTimeout(timer);
+    }
     const data = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(data.error?.message || '生图 HTTP ' + r.status);
     const d = data.data?.[0] || data.images?.[0] || {};
@@ -120,7 +131,7 @@ Describe only what is visible: subject, setting, lighting, colors, mood. No styl
   },
 
   preview(m) {
-         return { voice: '[语音]', ignore: '[已读]', image: '[图片]', sticker: '[表情]', transfer: '[转账]', redpacket: '[红包]', petinvite: '[领养邀请]' }[m.type] || m.content;
+                  return { voice: '[语音]', ignore: '[没回]', image: '[图片]', sticker: '[表情]', transfer: '[转账]', redpacket: '[红包]', petinvite: '[领养邀请]', offline: '[线下]' }[m.type] || m.content;
   },
 
     rules(group = false, userName = '') {
@@ -136,6 +147,7 @@ Describe only what is visible: subject, setting, lighting, colors, mood. No styl
   ${artists.length ? `只有会画画的人才发画作：${artists.join('、')}，按各自画风选类型。其他人只发拍照类型。` : '大家都不画画，只发拍照类型。'}
   画面描述写具体：拍了什么、在哪、光线和氛围。例如：${p}[图片]随拍|刚出锅的番茄炒蛋，旁边一碗米饭，厨房暖黄的灯光`);
     r.push(`- 聊天里的图片显示为 [图片#编号：内容]。想换头像时单独一行 ${p}[换头像]#编号${S.settings.image.url ? `，或者 ${p}[换头像]生成：类型|头像的画面描述` : ''}。很少使用，真的想换才换。`);
+    r.push(`- 发朋友圈：聊到的事让人想发朋友圈（分享、炫耀、吐槽、纪念），或者有人让他发而他也愿意时，单独一行 ${p}[发朋友圈]想发的内容（文案大意、想配什么图）。只写这一行，朋友圈会自动发出去，不用在聊天里把文案和配图再发一遍。偶尔用，不想发可以拒绝。`);
        r.push(Wallet.rules(p, userName || '对方', !group || !!userName, group && !!userName));
     r.push(Pet.rules(p));
     return r.join('\n');
@@ -148,6 +160,7 @@ Describe only what is visible: subject, setting, lighting, colors, mood. No styl
     if ((m = s.match(/^\[语音\]\s*(.+)$/))) return { type: 'voice', content: m[1].trim() };
     if ((m = s.match(/^\[表情包?\]\s*(.+)$/) || s.match(/^\[表情包?[:：]\s*(.+?)\]$/))) return { type: 'sticker', content: m[1].trim() };
     if ((m = s.match(/^\[换头像\]\s*(.+)$/))) return { type: 'avatar', content: m[1].trim() };
+    if ((m = s.match(/^\[发朋友圈\]\s*(.*)$/))) return { type: 'moment', content: m[1].trim() };
     if ((m = s.match(/^\[一起领养\]\s*(.+)$/))) return { type: 'petinvite', content: m[1].trim() };
     if ((m = s.match(/^\[领养\]\s*(.+)$/))) return { type: 'adopt', content: m[1].trim() };
     if ((m = s.match(/^\[宠物改名\]\s*(.+)$/))) return { type: 'petrename', content: m[1].trim() };
@@ -187,8 +200,28 @@ Describe only what is visible: subject, setting, lighting, colors, mood. No styl
     if (it.type === 'adopt') return Pet.charAdopt(it.sender, it.content, convId);
     if (it.type === 'petinvite') return Pet.charInvite(it.sender, it.content, convId);
     if (it.type === 'petrename') return Pet.charRename(it.sender, it.content);
+    if (it.type === 'moment') return this.chatMoment(it, convId);
     if (it.type === 'avatar') return this.changeAvatar(it.sender, it.content, convId);
     return it;
+  },
+   // 聊天里决定发朋友圈：后台去发，发完在聊天里留一条系统提示。同一角色 5 分钟内最多一次
+  _momentAt: {},
+  chatMoment(it, convId) {
+    const ch = charById(it.sender), pid = Conv.parse(convId).pid;
+    if (!ch || !pid) return null;
+    const wait = 5 * 60e3 - (Date.now() - (this._momentAt[ch.id] || 0));
+    if (wait > 0) {
+      Log.add(`${ch.name} 想发朋友圈，但刚发过`, `还要等 ${Math.ceil(wait / 60e3)} 分钟。内容：${it.content}`);
+      return null;
+    }
+    this._momentAt[ch.id] = Date.now();
+    const topic = `${ch.name}刚才在${Conv.label(convId, pid)}里决定发一条朋友圈${it.content ? '，想发的内容：' + it.content : ''}。按这个意思写，想配图就配图。`;
+    toast(`${ch.name} 正在发朋友圈…`, 2500);
+    Moments.post(ch.id, pid, null, topic)
+      .then(p => p ? addMsg(convId, ch.id, `${ch.name} 发了一条朋友圈`, 'sys')
+                   : Log.add(`${ch.name} 的朋友圈没发出去`, it.content))
+      .catch(e => Log.add('聊天里发朋友圈失败', e.message));
+    return null; // 这一行本身不显示在聊天里
   },
 
   async changeAvatar(charId, spec, convId) {
