@@ -217,7 +217,7 @@ const Prompt = {
   },
 
   // 某个角色最近 24 小时在其他会话里的聊天
-  async recentLines(charId, pid, exclude, perConv = 6) {
+  async recentLines(charId, pid, exclude, perConv = 6, { hideOffline = false } = {}) {
     const ids = [Conv.dm(pid, charId)];
     for (const g of S.groups) if (g.personaId === pid && g.members.includes(charId)) ids.push(Conv.g(g.id));
     for (const r of Reading.rooms) if (r.personaId === pid && r.members.includes(charId)) ids.push(Conv.r(r.id));
