@@ -543,7 +543,7 @@ async function regenerate(m) {
   await Social.setKv('intents', intents.filter(x => !(senders.has(x.from) && x.due >= since)));
 
   await ChatUI.refresh();
-  Gen.reply(m.convId);
+  Gen.reply(m.convId, { regen: true });
 }
 
 

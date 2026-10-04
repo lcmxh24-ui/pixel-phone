@@ -106,13 +106,13 @@ const Prompt = {
     if (!prev) return `（${day}）`;
     const d = m.ts - prev.ts;
     if (day !== this.dayText(prev.ts)) {
-      return `（${day}${d >= 3 * 3600e3 ? '，距上一条过了' + gapText(d) : ''}）`;
+       return `（${day}${d >= 30 * 60e3 ? '，距上一条过了' + gapText(d) : ''}）`;
     }
-    return d >= 3 * 3600e3 ? `（过了${gapText(d)}）` : '';
+    return d >= 30 * 60e3 ? `（过了${gapText(d)}）` : '';
   },
 
   // 告诉 AI 怎么换算"今天""明天"
-  TIME_RULE: '（聊天记录里的"今天""明天""昨天"，是按发那条消息的那天说的，要换算成现在的日期。比如昨天说"明天去"，指的就是今天。约好的时间已经过了，就当已经发生了。）',
+    TIME_RULE: '（聊天记录里的"今天""明天""昨天"，是按发那条消息的那天说的，要换算成现在的日期。比如昨天说"明天去"，指的就是今天。约好的时间已经过了，就当已经发生了。角色之前说"正在做""待会去做"的事，要按过去的时间往前推进：吃饭一般半小时到一小时就吃完了，洗碗十几分钟，写作业过一小时应该写了不少或者写完了，不要还停在刚开始。线下剧情里已经发生的事以线下剧情为准，比如线下已经吃过晚饭，就不能再说在吃晚饭。）',
   // 人设只当背景用：不复述、不介绍别人、标签和能力不挂嘴边
   PERSONA_RULE: `【人设怎么用】（重要）
 - 设定里的特点（性格标签、特殊能力、喜好、口头禅、身世）是背景，不是话题。真人不会把自己的特点挂在嘴边。
@@ -381,6 +381,12 @@ const Prompt = {
     vars.memory = vars.记忆;
 
     const { st, dy } = this.split('dm', vars);
+   // 角色上一次说话是多久前，让 AI 把"正在做的事"往前推进
+    const lastChar = [...all].reverse().find(m => m.sender === ch.id && ['text', 'voice'].includes(m.type));
+    if (lastChar) dy.push(`${ch.name}上一次发消息是${gapText(now - lastChar.ts)}前（内容：「${lastChar.content.slice(0, 40)}」）。如果当时说在做什么事，现在应该已经有进展或做完了。`);
+    // 最近一次线下剧情如果已经不在聊天记录范围里，单独补上
+    const lastOff = all.filter(m => m.type === 'offline').at(-1);
+    if (lastOff && !hist.includes(lastOff)) dy.push('【最近一次线下见面】\n' + this.offlineText(lastOff, pid));
         // 这个角色当群主或管理员、而你不在的群
     const invGroups = S.groups.filter(g => g.personaId === pid && g.userIn === false && g.members.includes(ch.id) && GroupAdmin.role(g, ch.id) !== 'member').map(g => g.name);
         st.push(this.fill(this.dmRules(known, invGroups, rel.theyBlock, rel.iBlock), vars));
