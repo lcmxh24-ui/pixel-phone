@@ -2339,9 +2339,20 @@ const PetGames = {
       const ctx = cv.getContext('2d'), pid = activePid(), me = persona(pid);
             const N = this.TILES.length, CELL = Math.floor(cv.width / 9);
       const { GROUPS, ITEMS, TALENTS, EVENTS } = this;
-      const BASE = ['#e04a3a', '#3a7ae0', '#3aa050', '#c060d0', '#f08a20', '#20a8b0', '#d04880', '#7a6a3a'];
-      // 前 8 个用固定颜色，之后按黄金角自动生成，人再多颜色也不会重复得太近
-      const colorOf = i => BASE[i] || `hsl(${Math.round(i * 137.5) % 360},60%,45%)`;
+       // 12 个差别明显的颜色；再多的人换深浅，配合编号区分
+      const BASE = ['#e6194b', '#3cb44b', '#4363d8', '#f58231', '#911eb4', '#42a5c4', '#f032e6', '#9a6324',
+        '#808000', '#000075', '#e6a800', '#008080'];
+      const colorOf = i => BASE[i] || `hsl(${Math.round(i * 137.5) % 360},70%,${i % 2 ? 35 : 55}%)`;
+      // 带编号的小圆牌：颜色 + 数字，颜色像的时候看数字
+      const badge = (x, y, r, pl) => {
+        ctx.save();
+        ctx.fillStyle = pl.color; ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill();
+        ctx.strokeStyle = '#fff'; ctx.lineWidth = 1; ctx.stroke();
+        ctx.fillStyle = '#fff'; ctx.font = `bold ${Math.round(r * 1.3)}px sans-serif`;
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(players.indexOf(pl) + 1, x, y + 0.5);
+        ctx.restore();
+      };
       const LV = ['空地', '小屋', '两栋小屋', '宠物乐园'];
       const SPD = { slow: 1.6, mid: 1, fast: 0.5 };
       const C = { bg: cvar('bg'), panel: cvar('panel'), them: cvar('them'), text: cvar('text'), line: cvar('border'), acc: cvar('accent') };
@@ -2356,7 +2367,8 @@ const PetGames = {
       // ===== 组队 =====
       let teams = null; // 组队赛时是 [{ n: 队名, i: 图标, ids: [玩家ID...] }]，个人赛是 null
       const TEAM_N = [['红队', '🔴'], ['蓝队', '🔵'], ['绿队', '🟢'], ['黄队', '🟡'], ['紫队', '🟣'], ['橙队', '🟠'], ['白队', '⚪'], ['黑队', '⚫']];
-      const mkTeam = i => ({ n: TEAM_N[i]?.[0] || `${i + 1}队`, i: TEAM_N[i]?.[1] || '🏳️', ids: [] });
+      const TEAM_C = ['#e04a3a', '#3a7ae0', '#3aa050', '#e0b828', '#9a50c8', '#f08a20', '#a0a0a0', '#303030'];
+      const mkTeam = i => ({ n: TEAM_N[i]?.[0] || `${i + 1}队`, i: TEAM_N[i]?.[1] || '🏳️', c: TEAM_C[i] || `hsl(${i * 67 % 360},60%,50%)`, ids: [] });
       const teamOf = pl => teams?.find(t => t.ids.includes(pl.id));
       const sameTeam = (a, b) => !!teams && a !== b && teamOf(a) === teamOf(b);
       // 人少的队每人多发的起始资金（补偿掷骰次数少）
@@ -2489,7 +2501,7 @@ const PetGames = {
         return out;
       };
 
-            const draw = () => {
+            const drawNow = () => {
         const S = CELL, now = performance.now(), CW = S * 7;
         ctx.fillStyle = C.bg; ctx.fillRect(0, 0, cv.width, cv.height);
         // 中间区域
@@ -2516,7 +2528,7 @@ const PetGames = {
           const cx = S + 8 + (i % cols) * cw, cy = top + Math.floor(i / cols) * rh;
           if (i === cur && !pl.out) { ctx.globalAlpha = 0.22; ctx.fillStyle = pl.color; rr(cx, cy, cw - 4, rh - 2, 4); ctx.fill(); }
           ctx.globalAlpha = pl.out ? 0.4 : 1;
-          ctx.fillStyle = pl.color; ctx.fillRect(cx + 3, cy + rh / 2 - 4, 6, 6);
+          badge(cx + 6, cy + rh / 2, Math.min(6, rh / 2 - 1), pl);
           ctx.fillStyle = C.text; ctx.font = `${fs}px sans-serif`;
           const it = Object.entries(pl.items).filter(([, v]) => v).map(([k, v]) => ITEMS[k].i + (v > 1 ? v : '')).join('');
           ctx.fillText(`${teamOf(pl)?.i || ''}${pl.talent.i}${pl.name.slice(0, cols > 1 ? 3 : 5)} ¥${pl.money}${pl.out ? ' 破产' : pl.skip ? ' 🏥' : ''}${cols > 1 ? '' : ' ' + it}`,
@@ -2528,7 +2540,7 @@ const PetGames = {
         tiles.forEach((t, i) => {
           const { x, y } = pos(i), o = t.owner && byId(t.owner), corner = i % 8 === 0;
           ctx.fillStyle = corner ? C.acc : C.them; rr(x + 1, y + 1, S - 2, S - 2, 4); ctx.fill();
-          if (o) { ctx.globalAlpha = 0.2; ctx.fillStyle = o.color; ctx.fill(); ctx.globalAlpha = 1; }
+         if (o) { ctx.globalAlpha = teams ? 0.35 : 0.2; ctx.fillStyle = teamOf(o)?.c || o.color; ctx.fill(); ctx.globalAlpha = 1; }
           if (t.g != null) { ctx.fillStyle = GROUPS[t.g]; rr(x + 3, y + 3, S - 6, 5, 2); ctx.fill(); }
           const lit = hl && hl.i === i && now - hl.t < 1500;
           ctx.strokeStyle = lit ? hl.c : o ? o.color : C.line; ctx.lineWidth = lit ? 3 : o ? 2 : 1;
@@ -2542,10 +2554,7 @@ const PetGames = {
             else if (t.lv) for (let k = 0; k < t.lv; k++) house(x + S / 2 - t.lv * 5 + k * 10 + 1, y + S - 10, '#3aa050');
             else { ctx.font = '8px sans-serif'; ctx.fillStyle = C.text; ctx.fillText(o ? '租' + rent(t) : '¥' + t.price, x + S / 2, y + S - 4); }
           }
-          if (o) { // 主人的小旗子
-            ctx.fillStyle = C.line; ctx.fillRect(x + 4, y + S - 13, 1, 9);
-            ctx.fillStyle = o.color; ctx.beginPath(); ctx.moveTo(x + 5, y + S - 13); ctx.lineTo(x + 11, y + S - 10.5); ctx.lineTo(x + 5, y + S - 8); ctx.fill();
-          }
+         if (o) badge(x + 8, y + S - 8, 6, o); // 主人的编号
         });
         // 棋子：同一格的人按网格排开，人多就缩小
         const at = {};
@@ -2569,7 +2578,30 @@ const PetGames = {
           });
         }
       };
-      const animT = setInterval(() => { if (!stopped && players.length) draw(); }, 150);
+       // 同一帧里不管要求重画多少次，只真正画一次
+      let drawQ = false;
+      const draw = () => {
+        if (drawQ || stopped) return;
+        drawQ = true;
+        requestAnimationFrame(() => { drawQ = false; if (!stopped) drawNow(); });
+      };
+      const animT = setInterval(() => { if (!stopped && players.length) draw(); }, 250);
+// 点棋盘上的格子，显示这块地的情况
+      cv.onclick = e => {
+        if (!players.length) return;
+        const r = cv.getBoundingClientRect();
+        const mx = (e.clientX - r.left) * cv.width / r.width, my = (e.clientY - r.top) * cv.height / r.height;
+        const i = tiles.findIndex((_, k) => { const q = pos(k); return mx >= q.x && mx < q.x + CELL && my >= q.y && my < q.y + CELL; });
+        if (i < 0) return;
+        const t = tiles[i], o = t.owner && byId(t.owner);
+        const here = players.filter(x => !x.out && x.pos === i).map(x => `${players.indexOf(x) + 1}号${x.name}`);
+        let s = `${t.i}${t.n}`;
+        if (t.price) s += o ? ` · ${players.indexOf(o) + 1}号${o.name}${teamOf(o) ? `（${teamOf(o).n}）` : ''}的地 · ${LV[t.lv]} · 过路费 ¥${rent(t)}` : ` · 没人买 · ¥${t.price}`;
+        if (here.length) s += ` · 现在在这：${here.join('、')}`;
+        hl = { i, t: performance.now(), c: o?.color || C.acc };
+        draw();
+        toast(s, 3000);
+      };
 
       // ---- 下方界面 ----
       const $u = s => $(s, ui);
@@ -2578,7 +2610,11 @@ const PetGames = {
         logs.unshift({ r: round, text, color: pl?.color || C.line });
         logs = logs.slice(0, 80);
         const box = $u('#mono-log');
-        if (box) box.innerHTML = logs.map(l => `<div><i style="background:${l.color}"></i><small>第${l.r}轮</small> ${esc(l.text)}</div>`).join('');
+        if (box) {
+          const l = logs[0];
+          box.insertAdjacentHTML('afterbegin', `<div><i style="background:${l.color}"></i><small>第${l.r}轮</small> ${esc(l.text)}</div>`);
+          while (box.children.length > 80) box.lastElementChild.remove();
+        }
         draw();
       };
       const setTurn = pl => { const t = $u('#mono-turn'); if (t) t.innerHTML = `轮到 <b style="color:${pl.color}">${esc(pl.name)}</b>`; };
@@ -2601,18 +2637,28 @@ const PetGames = {
         chat.push({ id, name, text });
         const box = $u('#mono-msgs');
         if (!box) return;
-        box.innerHTML = chat.slice(-40).map(c => `<div class="mono-c${c.id === 'user' ? ' me' : ''}"><b style="color:${byId(c.id)?.color || C.text}">${esc(c.name)}</b>：${esc(c.text)}</div>`).join('');
-        box.scrollTop = box.scrollHeight;
+          box.querySelector('.mono-wait')?.remove();
+        const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+        box.insertAdjacentHTML('beforeend', `<div class="mono-c${id === 'user' ? ' me' : ''}"><b style="color:${byId(id)?.color || C.text}">${esc(name)}</b>：${esc(text)}</div>`);
+        while (box.children.length > 40) box.firstElementChild.remove();
+        // 你往上翻着看的时候不强行拉到底
+        if (nearBottom) box.scrollTop = box.scrollHeight;
       };
             const aiTalk = async (desc, sid, userText) => {
-        const cs = players.slice(1).map(x => charById(x.id)).filter(Boolean), sp = sid && charById(sid);
+        const sp = sid && charById(sid);
+         // 所有还在场的角色都带上，这次主要说话的排在前面
+        const allC = players.slice(1).filter(x => !x.out || x.id === sid).map(x => charById(x.id)).filter(Boolean);
+        const recent = logs.slice(0, 6).map(l => l.text).join(' ');
+        const score = c => (c.id === sid ? 100 : 0) + (userText && userText.includes(c.name) ? 50 : 0)
+          + (recent.includes(c.name) ? 10 : 0) + Math.random();
+        const cs = allC.sort((a, b) => score(b) - score(a));
         const names = cs.map(c => c.name);
         const wb = WB.build(cs.map(c => c.id), '').constant;
         const system = [
           `你在同时扮演${names.join('、')}。他们正在和${me.name}用手机玩一局宠物大富翁（棋子是各自的宠物），大家边玩边在游戏的聊天框里打字聊天。`,
           wb && `【世界设定】\n${wb}`,
           ...cs.map(c => `【${c.name}的设定】\n${(c.persona || '（见世界设定）').slice(0, 800)}\n和${me.name}的关系：${getRel(pid, c.id).desc || '认识'}`),
-          `【要求】\n- 每行一条，格式：名字：内容。名字只能是${names.join('、')}，绝对不要替${me.name}说话。\n- 一共 1 到 3 条，都很短，像打游戏时随手打的字：得意、心疼钱、吐槽、起哄、互相拆台都可以，要符合各自的性格和关系。\n- 不写动作、神态和旁白。`,
+          `【要求】\n- 每行一条，格式：名字：内容。名字只能是${names.join('、')}，绝对不要替${me.name}说话。\n- 一共 1 到 5 条，都很短，像打游戏时随手打的字：得意、心疼钱、吐槽、起哄、互相拆台都可以，要符合各自的性格和关系。\n- 不写动作、神态和旁白。`,
         ].filter(Boolean).join('\n\n');
 
         const task = [
@@ -2621,16 +2667,21 @@ const PetGames = {
           chat.length && `【聊天框】\n${chat.slice(-8).map(x => x.name + '：' + x.text).join('\n')}`,
           userText ? `${me.name}刚刚在聊天框说：${userText}。要有人回应。` : `${desc}。${sp ? `这次主要是${sp.name}开口，` : ''}说一两句就行。`,
         ].filter(Boolean).join('\n\n');
-        const out = await API.claude(system, [{ role: 'user', content: task }], { maxTokens: 250 });
-        return Prompt.parseLines(out, names).msgs.filter(m => m.content && m.type !== 'sys').slice(0, 3)
-          .map(m => ({ id: cs.find(c => c.name === m.name).id, name: m.name, content: m.content }));
+       const out = await API.claude(system, [{ role: 'user', content: task }], { maxTokens: 600 });
+        // 名字对不上的那一条跳过，其他照常显示
+        const lines = Prompt.parseLines(out, names).msgs.filter(m => m.content && m.type !== 'sys')
+          .map(m => ({ c: cs.find(c => c.name === m.name), content: m.content }))
+          .filter(x => x.c).slice(0, 5)
+          .map(x => ({ id: x.c.id, name: x.c.name, content: x.content }));
+        if (!lines.length) Log.add('大富翁聊天：回复解析后为空', out.slice(0, 300));
+        return lines;
       };
       const localTalk = sid => {
         const c = byId(sid) || pick(players.slice(1));
         return [{ id: c.id, name: c.name, content: pick(['哈哈哈哈', '等着瞧', '这把我要赢', '我的钱啊😭', '稳住', '你运气也太好了吧', '下一个就是你']) }];
       };
       const talk = async (desc, sid = null, userText = '') => {
-        if (talking) { if (userText) pendingUser = userText; return; }
+        if (talking) { if (userText) pendingUser = pendingUser ? pendingUser + '；' + userText : userText; return; }
         talking = true;
         try {
           const lines = S.settings.claude.key ? await aiTalk(desc, sid, userText) : localTalk(sid);
@@ -2982,9 +3033,9 @@ teams = teamList;
         }
         ui.innerHTML = `<div class="mono-bar"><span id="mono-turn"></span>
             <select id="mono-spd" aria-label="速度"><option value="slow">慢</option><option value="mid">中</option><option value="fast">快</option></select></div>
-          <div class="pet-acts" id="mono-act"></div>
-          <h3>动态</h3><div class="mono-log" id="mono-log"></div>
-          <h3>聊天</h3><div class="mono-msgs" id="mono-msgs"><p class="mono-wait">可以和大家说点什么</p></div>
+           <div class="pet-acts" id="mono-act" style="min-height:44px"></div>
+            <h3>动态</h3><div class="mono-log" id="mono-log" style="max-height:160px;overflow-y:auto"></div>
+           <h3>聊天</h3><div class="mono-msgs" id="mono-msgs" style="max-height:200px;overflow-y:auto"><p class="mono-wait">可以和大家说点什么</p></div>
           <div class="mono-inp"><input id="mono-in" maxlength="60" placeholder="比如：这把我赢定了" aria-label="聊天内容"><button class="btn" data-send>发送</button></div>`;
         const sel = $u('#mono-spd');
         sel.value = Object.keys(SPD).find(k => SPD[k] === spd) || 'slow';
