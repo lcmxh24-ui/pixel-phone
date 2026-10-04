@@ -2337,7 +2337,7 @@ const PetGames = {
 
     start(p, cv, ui, done) {
       const ctx = cv.getContext('2d'), pid = activePid(), me = persona(pid);
-      const N = this.TILES.length, S = Math.floor(cv.width / 9);
+            const N = this.TILES.length, CELL = Math.floor(cv.width / 9);
       const { GROUPS, ITEMS, TALENTS, EVENTS } = this;
       const BASE = ['#e04a3a', '#3a7ae0', '#3aa050', '#c060d0', '#f08a20', '#20a8b0', '#d04880', '#7a6a3a'];
       // 前 8 个用固定颜色，之后按黄金角自动生成，人再多颜色也不会重复得太近
@@ -2369,8 +2369,11 @@ const PetGames = {
         .map(x => `${x.name}${x.out ? '（破产）' : ` 现金¥${x.money} 地${tiles.filter(t => t.owner === x.id).length}块`}`).join('，');
 
       // ---- 棋盘坐标：9×9 外圈，起点在右下角，顺时针 ----
-      const pos = i => i <= 8 ? { x: (8 - i) * S, y: 8 * S } : i <= 16 ? { x: 0, y: (16 - i) * S }
-        : i <= 24 ? { x: (i - 16) * S, y: 0 } : { x: 8 * S, y: (i - 24) * S };
+            const pos = i => {
+        const S = CELL;
+        return i <= 8 ? { x: (8 - i) * S, y: 8 * S } : i <= 16 ? { x: 0, y: (16 - i) * S }
+          : i <= 24 ? { x: (i - 16) * S, y: 0 } : { x: 8 * S, y: (i - 24) * S };
+      };
 
       const rr = (x, y, w, h, r) => {
         ctx.beginPath(); ctx.moveTo(x + r, y);
@@ -2398,8 +2401,8 @@ const PetGames = {
         return out;
       };
 
-      const draw = () => {
-        const now = performance.now(), CW = S * 7;
+            const draw = () => {
+        const S = CELL, now = performance.now(), CW = S * 7;
         ctx.fillStyle = C.bg; ctx.fillRect(0, 0, cv.width, cv.height);
         // 中间区域
         ctx.fillStyle = C.panel; rr(S + 4, S + 4, CW - 8, CW - 8, 8); ctx.fill();
@@ -2917,6 +2920,7 @@ const PetGames = {
           <label class="field" style="flex:1"><span>轮数</span><select id="mono-r"><option>15</option><option selected>20</option><option>30</option><option>40</option></select></label>
           <label class="field" style="flex:1"><span>起始资金</span><select id="mono-m"><option>1000</option><option selected>1500</option><option>2000</option></select></label>
           <label class="field" style="flex:1"><span>速度</span><select id="mono-s"><option value="slow">慢</option><option value="mid">中</option><option value="fast">快</option></select></label>
+          <label class="field" style="flex:1"><span>难度</span><select id="mono-d"><option value="1.5">简单</option><option value="1" selected>普通</option><option value="0.35">困难</option></select></label>
         </div>
         <p class="hint">人越多一轮越久，建议人多时选「快」。</p>
         <button class="btn" data-start style="margin-top:8px">开始</button>`;
@@ -2929,6 +2933,7 @@ const PetGames = {
         const ids = boxes().filter(x => x.checked).map(x => x.dataset.mc);
         if (!ids.length) return toast('至少选一个角色');
         MAX = Number($u('#mono-r').value);
+        diff = Number($u('#mono-d').value);
         p.games.monoSpd = $u('#mono-s').value;
         spd = SPD[p.games.monoSpd];
         const myPet = Pet.get($u('#mono-me')?.value) || p;
