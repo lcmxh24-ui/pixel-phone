@@ -388,7 +388,8 @@ Views.chat = async ({ convId }) => {
       if (k === 'all') {
         // 总结时记忆的 source 记的就是会话 ID
         for (const cid of [i.a, i.b]) {
-          for (const x of await DB.byIndex('mems', 'charId', cid)) if (x.source === convId) await DB.del('mems', x.id);
+         // 印象里混着其他会话的内容，只要来源包含这段私聊就一起删，宁可多忘一点也不留下不该有的记忆
+for (const x of await DB.byIndex('mems', 'charId', cid)) if (x.source === convId || x.from?.includes(convId)) await DB.del('mems', x.id);
         }
         Memory._q = { text: null, vec: null };
       }

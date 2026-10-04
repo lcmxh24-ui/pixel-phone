@@ -41,6 +41,8 @@ Views.health = async () => {
         return `<div class="row"><span>${esc(c.name)}</span><span>${ms.length} 条 · ★${ms.filter(m => m.level === 'important').length}${b ? ` · <b>⚠ ${b} 条待修复</b>` : ''}</span></div>`;
       }).join('') || '<p class="empty">还没有角色</p>'}
       ${bad.length ? `<button class="btn" data-act="fix" style="margin-top:8px" ${embErr ? 'disabled' : ''}>修复异常向量（${bad.length} 条）</button>` : ''}
+  <button class="btn ghost" data-act="compact" style="margin-top:8px">整理旧记忆</button>
+      <p class="empty">把 3 个月前的零碎普通记忆按月合并成大概印象，重要记忆不受影响。原记忆会被删除，建议先导出备份。</p>
     </div>
 
     <h3>等待总结的消息</h3><div class="card">
@@ -100,5 +102,16 @@ Views.health = async () => {
       running = false;
       Router.render();
     }
+      if (a === 'compact') {
+        if (!confirm('会把 3 个月前的零碎普通记忆合并成印象，原记忆删除后不能恢复。\n\n建议先导出备份。确定继续吗？')) return;
+        toast('整理中，别关网页…', 3000);
+        let merged = 0, made = 0;
+        for (const c of S.chars) {
+          const r = await Memory.compact(c.id, pid);
+          merged += r.merged; made += r.made;
+          if (r.merged) toast(`${c.name}：${r.merged} 条合并成 ${r.made} 条`, 1500);
+        }
+        toast(merged ? `完成，${merged} 条旧记忆合并成了 ${made} 条印象` : '没有需要整理的旧记忆', 3000);
+      }
   };
 };

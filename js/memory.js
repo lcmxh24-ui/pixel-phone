@@ -84,8 +84,7 @@ const inWindow = m => skip?.since && m.at && m.at >= skip.since
   && (m.source === skip.conv || skip.scenes?.has(m.source));
     const mems = (await DB.byIndex('mems', 'charId', charId))
       .filter(m => m.personaId === personaId && !inWindow(m));
-    const imp = mems.filter(m => m.level === 'important')
-      .sort((a, b) => b.ts - a.ts).slice(0, Number(cfg.importantCap));
+       const imp = mems.filter(m => m.level === 'important').sort((a, b) => b.ts - a.ts);
     // 只有最近几条重要记忆常驻，更早的重要记忆和普通记忆一起按相关度召回
     const pinN = Number(cfg.importantPin ?? 3);
     const important = imp.slice(0, pinN).reverse();
@@ -101,13 +100,20 @@ const inWindow = m => skip?.since && m.at && m.at >= skip.since
       if (qApi) mismatch++;
       return this.cos(qLocal, this.localVec(m.text));
     };
+        // 新鲜度：普通记忆每过半年，分数折扣多一半，最低打五折；重要记忆不打折
+    const now = Date.now();
+    const fresh = m => {
+      if (m.level === 'important') return 1;
+      const days = (now - (m.at || m.ts)) / 864e5;
+      return 0.5 + 0.5 * Math.pow(0.5, days / 180);
+    };
     const picked = pool
-      .map(m => ({ m, s: score(m) }))
-      .filter(x => x.s >= Number(cfg.threshold))
-      .sort((a, b) => b.s - a.s)
+      .map(m => { const raw = score(m); return { m, raw, s: raw * fresh(m) }; })
+      .filter(x => x.raw >= Number(cfg.threshold)) // 门槛按原始相似度
+      .sort((a, b) => b.s - a.s)                   // 排序按打折后的分数
       .slice(0, Number(cfg.topK))
       .map(x => x.m)
-      .sort((a, b) => a.ts - b.ts);
+      .sort((a, b) => (a.at || a.ts) - (b.at || b.ts));
     if (mismatch) Log.add(`有 ${mismatch} 条记忆的向量维度和当前设置不符`, '去「记忆体检」点「修复异常向量」');
     return { important, normal: picked };
   },
@@ -115,11 +121,22 @@ const inWindow = m => skip?.since && m.at && m.at >= skip.since
      async retrieveText(charId, personaId, query, title = '', skip = null) {
     const { important, normal } = await this.retrieve(charId, personaId, query, skip);
     if (!important.length && !normal.length) return '';
-    const fmt = m => `- [${new Date(m.at || m.ts).toLocaleDateString('zh-CN')}] ${m.text}`;
+        const when = m => {
+      const t = m.at || m.ts, d = new Date(t), now = new Date();
+      const days = (now - t) / 864e5;
+      if (m.level === 'important' || days < 30) return d.toLocaleDateString('zh-CN');
+      if (days < 180) return `大约${Math.max(1, Math.round(days / 30))}个月前`;
+      const season = ['冬', '冬', '春', '春', '春', '夏', '夏', '夏', '秋', '秋', '秋', '冬'][d.getMonth()];
+      const dy = now.getFullYear() - d.getFullYear();
+      if (dy === 0) return `今年${season}天`;
+      if (dy === 1) return `去年${season}天`;
+      return `${d.getFullYear()}年左右`;
+    };
+    const fmt = m => `- [${when(m)}] ${m.text}`;
     const out = [];
     if (important.length) out.push(`【${title}记得的事】\n` + important.map(fmt).join('\n'));
     if (normal.length) out.push(`【${title}可能会联想到的旧事】\n` + normal.map(fmt).join('\n'));
-    out.push(`（这些是${title}脑子里的背景，用来保持前后一致，不是要说的话题。真人聊天很少主动翻旧账：只有当前话题直接碰到、或者确实好笑/有意义时才自然带一句，一段对话里最多一次，大多数时候一句都不提。不要为了显得"记得"而提。）`);
+    out.push(`（这些是${title}脑子里的背景，用来保持前后一致，不是要说的话题。真人聊天很少主动翻旧账：只有当前话题直接碰到、或者确实好笑/有意义时才自然带一句，一段对话里最多一次，大多数时候一句都不提。不要为了显得"记得"而提。时间标得模糊的是很久以前的事，细节可能记不清，真提到时语气也要带点不确定。）`);
     return out.join('\n\n');
   },
 
@@ -191,7 +208,7 @@ const inWindow = m => skip?.since && m.at && m.at >= skip.since
    - important：关系的明显变化、还没兑现的约定、改变了两人相处方式的事件、对方第一次透露的重要身份或经历。
    - normal：喜好、日常细节、闲聊里的梗、一般情绪。
 3. 相似内容合并，寒暄和已经说过的旧事忽略。每人 0 到 4 条，宁少勿多。
-4. 涉及时间的一律写成具体日期，比如"3月6日约好一起去吃火锅"，不要写"今天""明天""昨天""下周"。
+4. 涉及时间的一律写成带年份的具体日期，比如"2026年3月6日约好一起去吃火锅"，不要写"今天""明天""昨天""下周"，也不要省略年份。
 5. 不要记录人设里本来就有的东西：某人表现出了自己的性格、提到自己的喜好或能力，这些不算新信息，不用记。只记这段聊天里真正发生的新事情。
 6. 只输出 JSON，不要其他文字。
 键名必须是这些名字：${names.join('、')}。格式：{"名字":[{"text":"...","level":"normal"}]}`;
@@ -205,14 +222,17 @@ const inWindow = m => skip?.since && m.at && m.at >= skip.since
         throw new Error('总结结果里的名字和角色对不上：' + Object.keys(obj).join('、'));
       }
 
-      let total = 0;
+         let total = 0;
       for (const c of chars) {
         const arr = Array.isArray(obj) ? (chars.length === 1 ? obj : []) : (obj[c.name] || []);
         for (const it of arr) {
-          if (it?.text) await Memory.add(c.id, info.pid, it.text, it.level === 'important' ? 'important' : 'normal', convId, useful[0].ts);
-          total++;
+          if (it?.text) {
+            await Memory.add(c.id, info.pid, it.text, it.level === 'important' ? 'important' : 'normal', convId, useful[0].ts);
+            total++;
+          }
         }
       }
+
             // 全部处理完时按最晚的进度时间记；没处理完就按这一批最后一条，免得跳过后面的消息
       Object.assign(st, { lastTs, fails: 0, lastError: '' });
       await DB.put('kv', st);
@@ -241,5 +261,71 @@ const inWindow = m => skip?.since && m.at && m.at >= skip.since
       }
     }
     return total;
+  },
+  // 把很久以前的普通记忆按月合并成模糊印象。重要记忆和已合并过的不动
+  // 先写新的再删旧的，任何一步失败，原记忆都保留
+  async compact(charId, personaId) {
+    const now = new Date();
+    // 只处理 3 个月前那个月及更早的整月
+    const cutoff = new Date(now.getFullYear(), now.getMonth() - 2, 1).getTime();
+        
+      // 原文还在聊天窗口里的记忆先不合并，否则合并后的印象会和聊天记录重复
+    // （原记忆本来会被 retrieve 里的 inWindow 跳过，印象不会）
+    const winStart = {}; // 每个会话窗口里第一条消息的时间
+    for (const id of this.convIds(personaId)) {
+      const w = Prompt.window(await getMsgs(id));
+      if (w.length) winStart[id] = w[0].ts;
+    }
+    const stillInWindow = m => {
+      const start = winStart[m.source];
+      return start != null && (m.at || m.ts) >= start;
+    };
+
+    const old = (await DB.byIndex('mems', 'charId', charId)).filter(m =>
+      m.personaId === personaId && m.level !== 'important' && m.source !== 'compact'
+      && !String(m.source).startsWith('offline:') // 线下剧情可以单独编辑和删除，不合并
+      && (m.at || m.ts) < cutoff && !stillInWindow(m));
+
+    const groups = {};
+    for (const m of old) {
+      const d = new Date(m.at || m.ts), k = `${d.getFullYear()}-${d.getMonth() + 1}`;
+      (groups[k] ||= []).push(m);
+    }
+
+    const name = charById(charId)?.name || '';
+    const pname = persona(personaId).name;
+    let merged = 0, made = 0;
+    for (const [k, ms] of Object.entries(groups)) {
+      if (ms.length < 4) continue;
+      const [y, mo] = k.split('-').map(Number);
+      try {
+        const out = await API.claude(
+          `你是记忆整理助手。下面是${name}在${y}年${mo}月关于和${pname}相处的零碎记忆，已经是很久以前的事了。
+把它们概括成 1 到 3 条模糊的整体印象，像人回忆很久以前的事那样：
+- 保留对关系有意义的部分（一起做过的事、反复出现的话题、那段时间的状态），琐碎细节丢掉。
+- 每条以"${y}年${mo}月前后"开头，写清楚是谁，不用指代不明的代词。
+- 只输出 JSON 数组，不要其他文字：[{"text":"..."}]`,
+          [{ role: 'user', content: ms.sort((a, b) => (a.at || a.ts) - (b.at || b.ts)).map(m => '- ' + m.text).join('\n') }],
+          { temperature: 0.3, maxTokens: 800 });
+        const arr = this.parseJSON(out);
+        const items = (Array.isArray(arr) ? arr : []).filter(it => it?.text).slice(0, 3);
+        if (!items.length) throw new Error('合并结果为空');
+
+        // 先写新的，时间记在那个月的 15 号
+                const from = [...new Set(ms.map(m => m.source))]; // 这条印象由哪些会话的记忆合并而来
+        for (const it of items) {
+          const nm = await this.add(charId, personaId, it.text, 'normal', 'compact', new Date(y, mo - 1, 15).getTime());
+          nm.from = from;
+          await DB.put('mems', nm);
+        }
+
+        // 再删旧的
+        for (const m of ms) await DB.del('mems', m.id);
+        merged += ms.length; made += items.length;
+      } catch (e) {
+        Log.add(`整理旧记忆失败：${name} ${y}年${mo}月`, `${e.message}（原记忆已保留）`);
+      }
+    }
+    return { merged, made };
   },
 };

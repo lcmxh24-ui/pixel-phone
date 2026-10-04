@@ -353,6 +353,7 @@ input,textarea,select,.inputbar textarea{font-size:max(16px,var(--fs))}
 .mono-inp input{flex:1;min-width:0}
 .mono-result{grid-column:1/-1;padding:8px;background:var(--them);border:2px solid var(--border)}
 .mono-result ol{margin:4px 0 0 20px;line-height:1.6}
+.mono-pick{max-height:40vh;overflow-y:auto}
 
 /* 多选转发 */
 .msg.sel .bubble { outline: 2px dashed var(--accent2); outline-offset: 2px; }

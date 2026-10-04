@@ -135,6 +135,49 @@ const ACT_MS = { roll: [2000, 3000], stretch: [1600, 1600], loaf: [4000, 7000], 
   howl: [2500, 3000], peck: [2000, 3500], flap: [1500, 2000], flutter: [2500, 4000], sprint: [1500, 2500], graze: [3000, 5000],
   moo: [1500, 1500], croak: [1500, 2000], tongue: [1200, 1200], roar: [1500, 1500], stomp: [1500, 2000], glow: [2500, 3500],
   binky: [2000, 2500], thump: [1500, 2000], slide: [1500, 2500], pounce: [2000, 2000], spin: [2000, 3000] };
+// ===== 装扮：所有宠物通用 =====
+// 头饰用小点阵（自动戴在头顶）；脸部和脖子用 gen 按眼睛位置生成，换动物不用改
+const WEAR_SLOTS = { head: '头饰', face: '脸部', neck: '脖子' };
+const WEAR = {
+  bow:    { slot: 'head', n: '蝴蝶结', i: '🎀', pal: { R: '#f06080', D: '#b83058' }, map: ['RR.RR', 'RRDRR'] },
+  crown:  { slot: 'head', n: '小皇冠', i: '👑', pal: { Y: '#f0c030', R: '#e04a3a', B: '#4a90d0' }, map: ['Y.Y.Y', 'YRYBY', 'YYYYY'] },
+  tophat: { slot: 'head', n: '小礼帽', i: '🎩', pal: { K: '#2a2a30', R: '#e04a3a' }, map: ['.KKK.', '.KKK.', '.RRR.', 'KKKKK'] },
+  straw:  { slot: 'head', n: '草帽', i: '👒', pal: { S: '#e8c870', R: '#e04a3a' }, map: ['..SSS..', '.SRRRS.', 'SSSSSSS'] },
+  santa:  { slot: 'head', n: '圣诞帽', i: '🎅', pal: { R: '#e04a3a', W: '#ffffff' }, map: ['....W', '..RR.', '.RRR.', 'WWWWW'] },
+  party:  { slot: 'head', n: '生日帽', i: '🥳', pal: { Y: '#f8d838', P: '#f490b0', B: '#6ab0e8' }, map: ['..Y..', '..P..', '.PBP.', 'PBPBP'] },
+  flower: { slot: 'head', n: '花环', i: '🌸', pal: { P: '#f490b0', Y: '#f8d838', G: '#5f9a3a', W: '#ffffff' }, map: ['P.W.Y', 'GPGYG'] },
+  glasses: { slot: 'face', n: '圆眼镜', i: '👓', gen(a, put) {
+    const c = '#3a3030';
+    for (const e of a.eyes) { put(e - 1, a.ey, c); put(e + 1, a.ey, c); put(e, a.ey - 1, c); put(e, a.ey + 1, c); }
+    for (let x = a.l + 1; x < a.r; x++) put(x, a.ey, c);
+  } },
+  sun: { slot: 'face', n: '墨镜', i: '🕶️', gen(a, put) {
+    for (let x = a.l - 1; x <= a.r + 1; x++) put(x, a.ey, '#1e1e24');
+    for (const e of a.eyes) put(e, a.ey, '#6a6a7a');
+  } },
+  blush: { slot: 'face', n: '腮红', i: '😊', gen(a, put) {
+    for (const x of [a.l - 1, a.r + 1]) if (a.solid(x, a.ey + 1)) put(x, a.ey + 1, '#f490a0');
+  } },
+  scarf: { slot: 'neck', n: '红围巾', i: '🧣', gen(a, put) {
+    let end = -1;
+    for (let x = a.l - 2; x <= a.r + 2; x++) if (a.solid(x, a.ny)) { put(x, a.ny, '#e04a3a'); end = x; }
+    if (end >= 0) { put(end, a.ny + 1, '#a83020'); if (a.ny + 2 < a.H) put(end, a.ny + 2, '#e04a3a'); }
+  } },
+  bell: { slot: 'neck', n: '铃铛项圈', i: '🔔', gen(a, put) {
+    for (let x = a.l - 2; x <= a.r + 2; x++) if (a.solid(x, a.ny)) put(x, a.ny, '#4a90d0');
+    put(a.cx, a.ny + 1, '#f0c030');
+  } },
+  bowtie: { slot: 'neck', n: '领结', i: '🤵', gen(a, put) {
+    const c = '#e04a3a';
+    put(a.cx - 1, a.ny, c); put(a.cx, a.ny, '#a02030'); put(a.cx + 1, a.ny, c);
+    put(a.cx - 1, a.ny + 1, c); put(a.cx + 1, a.ny + 1, c);
+  } },
+};
+// 个别动物的装扮位置修正：ny 是脖子在第几行（从 0 数），ey 是眼睛行，cx 是脸中线
+// 哪只戴着别扭就在这里加一行
+const WEAR_FIX = {
+  frog: { ny: 5 }, // 嘴在第 4 行，围巾放到嘴下面的白肚皮上
+};
 
 const Pet = {
   list: [], view: 'list', curId: null, fx: [], _raf: 0, game: null, back: null, updStats: null,
@@ -410,7 +453,8 @@ momentPid(p) {
   showTopic(p, charId) {
     const co = p.owners.filter(o => o !== charId).map(o => this.who(o));
     const recent = p.log.slice(0, 2).map(l => this.who(l.who) + l.text).join('；');
-    return `这次你想在朋友圈晒一下${co.length ? '和' + co.join('、') + '一起' : '自己'}养的${SPECIES[p.sp].name}「${p.name}」（${this.colorName(p)}，${STAGES[this.stage(p)].n}），它现在${this.mood(p)}。${recent ? '最近：' + recent + '。' : ''}这是养宠 App 里的像素电子宠物，不是真的动物。配图用 [图片]宠物截图|${p.name}，也可以再配一张别的日常照片。`;
+    return `这次你想在朋友圈晒一下${co.length ? '和' + co.join('、') + '一起' : '自己'}养的${SPECIES[p.sp].name}「${p.name}」（${this.colorName(p)}，${STAGES[this.stage(p)].n}），它现在${this.mood(p)}${this.wearText(p) ? '，戴着' + this.wearText(p) : ''}。
+${recent ? '最近：' + recent + '。' : ''}这是养宠 App 里的像素电子宠物，不是真的动物。配图用 [图片]宠物截图|${p.name}，也可以再配一张别的日常照片。`;
   },
 
     async tickAll() {
@@ -420,6 +464,7 @@ momentPid(p) {
       await this.autoCare(p);
       this.maybeShowOff(p);
       this.maybeVisit(p);
+      this.maybeDress(p);
     }
     await this.save();
     if (this.view === 'pet' && !$('#pet-root')?.hidden) this.updStats?.();
@@ -441,7 +486,8 @@ momentPid(p) {
       const whose = own
         ? `${charById(charId)?.name}${co.length ? '和' + co.join('、') + '一起' : '自己'}养的`
         : `${co.join('、')}养的`;
-      return { ts: p.log[0]?.ts || p.born, t: `[手机养宠App里的像素电子宠物，不是真实动物] ${whose}${this.colorName(p)}${SPECIES[p.sp].name}「${p.name}」（${STAGES[this.stage(p)].n}），现在${this.mood(p)}${this.loc(p) !== this.homeOf(p) ? `，正在${this.who(this.loc(p))}家串门` : ''}
+      return { ts: p.log[0]?.ts || p.born, t: `[手机养宠App里的像素电子宠物，不是真实动物] ${whose}${this.colorName(p)}${SPECIES[p.sp].name}「${p.name}」（${STAGES[this.stage(p)].n}），现在${this.mood(p)}${this.wearText(p) ? '，戴着' + this.wearText(p) : ''}
+${this.loc(p) !== this.homeOf(p) ? `，正在${this.who(this.loc(p))}家串门` : ''}
 ${recent ? '。最近：' + recent : ''}` };
     });
   },
@@ -449,14 +495,15 @@ ${recent ? '。最近：' + recent : ''}` };
   // ===== 角色自己领养 / 邀请一起养 / 改名 =====
   rules(p) {
     const sps = Object.values(SPECIES).map(s => `${s.name}（${s.colors.map(c => c.n).join('/')}）`).join('、');
-        return `- 宠物（很少用。真的想养、符合性格和剧情时才用，可以自己主动决定，不用等别人提）：
+        return `- 宠物（想养、符合性格和剧情时就用，可以自己主动决定，不用等别人提）：
   注意：这里的宠物都是大家手机上一个养宠小程序里的像素电子宠物，不是现实里的动物。喂食、洗澡、遛弯、看医生都是在 App 里点按钮，不能抱、不能带出门、不会真的掉毛。可以像聊手游一样聊它。
   自己领养：单独一行 ${p}[领养]动物|花色|名字
   想和对方一起养：单独一行 ${p}[一起领养]动物|花色|名字。名字可以空着，让对方起或者之后一起商量。对方同意了才算数。
   给自己参与养的宠物改名（比如商量好了新名字）：单独一行 ${p}[宠物改名]旧名字|新名字
   照顾宠物：对方让你帮忙照看，或者你自己想帮忙时，单独一行 ${p}[照顾宠物]宠物名字|喂食/铲屎/洗澡/摸摸/看医生。可以照顾自己养的，也可以帮认识的人照顾。一次一个动作，能做到就答应，不用推脱说做不到。
   宠物串门：想带自己养的宠物去对方家玩，单独一行 ${p}[宠物串门]自己宠物的名字|去；想邀请对方的宠物来自己家玩，单独一行 ${p}[宠物串门]对方宠物的名字|来。可以加小时数：名字|来|3。偶尔用。
-  每人自己最多养 3 只。${p ? '群里几个人都想养的话，每人各自单独写一行。' : ''}能养的动物和花色：${sps}`;
+  给宠物换装扮：单独一行 ${p}[宠物装扮]宠物名字|装扮名，摘掉写 ${p}[宠物装扮]宠物名字|摘掉。可选：${Object.values(WEAR).map(w => w.n).join('、')}。偶尔用，比如过节、心情好、想打扮一下的时候。
+    ${p ? '群里几个人都想养的话，每人各自单独写一行。' : ''}能养的动物和花色：${sps}`;
   },
 
   findSp(n) {
@@ -535,7 +582,6 @@ ${recent ? '。最近：' + recent : ''}` };
   const v = this.parseSpec(spec);
   const i = Conv.parse(convId), pid = convPid(convId);
   if (!v || !pid || !charById(charId)) return null;
-  if (this.list.filter(p => p.owners.includes(charId) && this.petPid(p) === pid).length >= 3) return null;
   const owners = [charId];
   if (i.type === 'cc') owners.push(charId === i.a ? i.b : i.a);
   const p = this.newPet(v.sp, v.color, v.name, owners, pid);
@@ -635,16 +681,124 @@ ${recent ? '。最近：' + recent : ''}` };
 
   // ===== 绘制 =====
   palette(p) { const s = SPECIES[p.sp]; return { ...PET_C, ...(s.colors[p.color] || s.colors[0]) }; },
-  drawSprite(ctx, p, x, y, s, o = {}) {
-    const map = this.mapOf(p), pal = this.palette(p);
+    drawSprite(ctx, p, x, y, s, o = {}) {
+    const map = this.mapOf(p), pal = this.palette(p), W = map[0].length;
+    const px = (i, j, c) => { ctx.fillStyle = c; ctx.fillRect(x + (o.flip ? W - 1 - i : i) * s, y + j * s, s, s); };
     map.forEach((row, j) => [...row].forEach((ch, i) => {
       if (ch === '.') return;
       const c = ch === 'E' && o.blink ? pal.B || pal.W : pal[ch];
-      if (!c) return;
-      ctx.fillStyle = c;
-      ctx.fillRect(x + (o.flip ? row.length - 1 - i : i) * s, y + j * s, s, s);
+      if (c) px(i, j, c);
     }));
+    // 装扮画在身体上面；头饰可能画到第 0 行上方（负数行）
+    if (p.wear) for (const [i, j, c] of this.wearPixels(p)) px(i, j, c);
   },
+
+  // 从点阵里找眼睛、头顶、脖子的位置，按点阵缓存
+  anchor(map) {
+    this._anc ??= new Map();
+    let a = this._anc.get(map);
+    if (a) return a;
+    const W = map[0].length, H = map.length, solid = (x, y) => !!map[y]?.[x] && map[y][x] !== '.';
+    let ey = map.findIndex(r => r.includes('E'));
+    const eyes = ey < 0 ? [] : [...map[ey]].map((c, x) => (c === 'E' ? x : -1)).filter(x => x >= 0);
+    if (ey < 0) { ey = Math.floor(H / 3); eyes.push(Math.floor(W / 2)); }
+    const l = Math.min(...eyes), r = Math.max(...eyes), cx = Math.round((l + r) / 2);
+    let top = H;
+    for (let x = cx - 1; x <= cx + 1; x++) {
+      const y = map.findIndex(row => row[x] && row[x] !== '.');
+      if (y >= 0) top = Math.min(top, y);
+    }
+    if (top === H) top = 0;
+    a = { W, H, ey, eyes, l, r, cx, top, ny: Math.min(H - 2, ey + 2), solid };
+    this._anc.set(map, a);
+    return a;
+  },
+
+  // 装扮要画的像素：[列, 行, 颜色]，坐标和宠物点阵一致
+  wearPixels(p) {
+        const a = { ...this.anchor(this.mapOf(p)), ...WEAR_FIX[p.sp] }, out = [], w = p.wear || {};
+    const put = (x, y, c) => { if (x >= 0 && x < a.W) out.push([x, y, c]); };
+    const head = WEAR[w.head];
+    if (head?.map) {
+      const hw = head.map[0].length, hh = head.map.length;
+      const left = Math.max(0, Math.min(a.W - hw, a.cx - Math.floor(hw / 2))), top = a.top - hh + 1;
+      head.map.forEach((row, j) => [...row].forEach((ch, i) => { const c = head.pal[ch]; if (c) put(left + i, top + j, c); }));
+    }
+    WEAR[w.face]?.gen(a, put);
+    WEAR[w.neck]?.gen(a, put);
+    return out;
+  },
+  wearText(p) { return Object.values(p.wear || {}).map(k => WEAR[k]?.n).filter(Boolean).join('、'); },
+  // 换装扮。k 为空表示摘掉。没变化返回 false
+  setWear(p, slot, k, who) {
+    p.wear ??= {};
+    const old = p.wear[slot] || null;
+    if (old === (k || null)) return false;
+    if (k) p.wear[slot] = k; else delete p.wear[slot];
+    const t = k ? `给它戴上了${WEAR[k].n}` : `摘掉了它的${WEAR[old]?.n || '装扮'}`;
+    this.log(p, who, p.owners.includes(who) ? t : '帮忙' + t);
+    return true;
+  },
+  // 角色偶尔自己给宠物换装扮（每只最多一天一次）
+  maybeDress(p) {
+    const cs = this.charOwners(p);
+    if (!cs.length || this.asleep(p) || Date.now() - (p.lastDress || 0) < 24 * 3600e3 || Math.random() > 1 / 1440) return;
+    p.lastDress = Date.now();
+    const k = pick(Object.keys(WEAR)), slot = WEAR[k].slot;
+    this.setWear(p, slot, p.wear?.[slot] === k ? null : k, pick(cs).id);
+  },
+  // 角色在聊天里换装扮：[宠物装扮]名字|装扮名 或 名字|摘掉
+  async charDress(charId, spec, convId) {
+    const [a, b = ''] = String(spec).split(/[|｜]/).map(x => x.trim());
+    const pid = convPid(convId);
+    const can = this.list.filter(p => this.petPid(p) === pid && (p.owners.includes(charId)
+      || (pid && p.owners.includes('p:' + pid) && knows(pid, charId))));
+    const p = can.find(x => a && a.includes(x.name)) || (can.length === 1 ? can[0] : null);
+    if (!p) return null;
+    let msg;
+    if (/摘|脱|不戴|取下/.test(b)) {
+      const worn = Object.keys(p.wear || {});
+      const hit = worn.filter(s => b.includes(WEAR[p.wear[s]]?.n) || b.includes(WEAR_SLOTS[s]));
+      const slots = hit.length ? hit : worn;
+      if (!slots.length) return null;
+      slots.forEach(s => this.setWear(p, s, null, charId));
+      msg = `${this.who(charId)}摘掉了「${p.name}」的装扮`;
+    } else {
+      const k = Object.keys(WEAR).find(k => b && (b.includes(WEAR[k].n) || WEAR[k].n.includes(b)));
+      if (!k || !this.setWear(p, WEAR[k].slot, k, charId)) return null;
+      msg = `${this.who(charId)}给「${p.name}」戴上了${WEAR[k].i}${WEAR[k].n}`;
+    }
+    await this.save();
+    if (this.view === 'pet' && this.curId === p.id) this.updStats?.();
+    return { sender: charId, type: 'sys', content: msg };
+  },
+
+  // 装扮面板
+  renderDress(p) {
+    this.stopAll(); this.view = 'dress'; this.back = () => this.renderPet();
+    p.wear ??= {};
+    const draw = () => {
+      const el = this.show(this.head('装扮') + `
+        <div style="text-align:center"><canvas id="dress-prev" width="120" height="120" aria-label="${esc(p.name)}的装扮预览"></canvas></div>
+        ${Object.entries(WEAR_SLOTS).map(([slot, n]) => `<h3>${n}</h3><div class="pet-acts">
+          <button class="btn ${p.wear[slot] ? 'ghost' : ''}" data-w="${slot}|" aria-pressed="${!p.wear[slot]}">不戴</button>
+          ${Object.entries(WEAR).filter(([, w]) => w.slot === slot).map(([k, w]) =>
+            `<button class="btn ${p.wear[slot] === k ? '' : 'ghost'}" data-w="${slot}|${k}" aria-pressed="${p.wear[slot] === k}">${w.i} ${w.n}</button>`).join('')}
+        </div>`).join('')}`);
+      const cv = $('#dress-prev', el), ctx = cv.getContext('2d'), map = this.mapOf(p);
+      const s = Math.floor(100 / Math.max(map[0].length, map.length + 4));
+      ctx.clearRect(0, 0, 120, 120);
+      this.drawSprite(ctx, p, Math.floor((120 - map[0].length * s) / 2), Math.floor((120 - (map.length + 4) * s) / 2) + 4 * s, s);
+      el.addEventListener('click', async e => {
+        const v = e.target.closest('[data-w]')?.dataset.w;
+        if (!v) return;
+        const [slot, k] = v.split('|');
+        if (this.setWear(p, slot, k || null, this.me())) { await this.save(); draw(); }
+      });
+    };
+    draw();
+  },
+
   drawMini(cv, p) {
     const ctx = cv.getContext('2d'), map = this.mapOf(p);
     const s = Math.floor(cv.width / (Math.max(map[0].length, map.length) + 1));
@@ -667,7 +821,7 @@ ${recent ? '。最近：' + recent : ''}` };
   // 宠物现在在谁家：串门中就是对方家，否则是自己家
   loc(p, now = Date.now()) { return p.visit && p.visit.until > now ? p.visit.host : this.homeOf(p); },
   hostName(h) { return h === this.me() ? '我' : this.who(h); },
-  yardPets() { const me = this.me(); return this.list.filter(p => this.loc(p) === me).slice(0, 8); },
+  yardPets() { const me = this.me(); return this.list.filter(p => this.loc(p) === me).slice(0, 10); },
 
     mountYard() {
     const cv = document.createElement('canvas');
@@ -858,13 +1012,15 @@ ${recent ? '。最近：' + recent : ''}` };
       if (['walk', 'run', 'chase', 'ball', 'bug', 'meet', 'sprint'].includes(a.mode) && a.h === 0 && tr.gait !== 'float')
         bob = Math.floor(now / (a.mode === 'walk' ? 180 : 100)) % 2;
       if (a.chew || a.mode === 'graze') bob = Math.floor(now / 250) % 2;
-      off.width = map[0].length; off.height = map.length;
+            // 戴了头饰就在上面多留 4 行，免得帽子被裁掉
+      const PAD = p.wear?.head ? 4 : 0;
+      off.width = map[0].length; off.height = map.length + PAD;
       octx.clearRect(0, 0, off.width, off.height);
-      this.drawSprite(octx, p, 0, 0, 1, { blink, flip: a.dir < 0 });
+      this.drawSprite(octx, p, 0, PAD, 1, { blink, flip: a.dir < 0 });
       // 影子：离地越高越淡
       ctx.globalAlpha = Math.max(0.05, 0.22 - (a.h + o.lift) / 300); ctx.fillStyle = '#000';
       ctx.fillRect(Math.round(a.x + 2), Math.round(a.y) - 1, w - 4, 2); ctx.globalAlpha = 1;
-      a.box = this.blit(ctx, off, a.x + w / 2, a.y - a.h - bob, w, h, o);
+            a.box = this.blit(ctx, off, a.x + w / 2, a.y - a.h - bob, w, h + PAD * s, o);
     };
 
     const loop = now => {
@@ -1178,7 +1334,8 @@ ${recent ? '。最近：' + recent : ''}` };
         <button class="btn ghost" data-game="catch">🍎 接食物</button><button class="btn ghost" data-game="run">🏃 跑酷</button>
         <button class="btn ghost" data-game="box">📦 推箱子</button><button class="btn ghost" data-game="monopoly">🎲 大富翁</button></div>`}`
                 : '<p class="empty">你还不认识它的主人，只能看看。</p>'}
-      ${visitBtn}
+           ${visitBtn}
+      ${can ? '<button class="btn ghost" data-pa="dress">🎀 装扮</button>' : ''}
       ${cs.length && S.settings.claude.key ? '<button class="btn ghost" data-pa="show">📸 让主人晒一下</button>' : ''}
       <h3>动态</h3><div class="pet-log" id="pet-log"></div>
       <small>${esc(this.ownerText(p))}</small>
@@ -1202,7 +1359,7 @@ ${recent ? '。最近：' + recent : ''}` };
     let x = (240 - w * s) / 2, dir = 1, lastFx = 0;
     // 在同一个地方的其他宠物（自己的其他宠物、来串门的），一起在小窝里跑
     const spot = this.loc(p);
-    const mates = this.list.filter(o => o !== p && this.loc(o) === spot).slice(0, 4).map(o => {
+    const mates = this.list.filter(o => o !== p && this.loc(o) === spot).slice(0, 6).map(o => {
       const om = this.mapOf(o), os = Math.max(2, Math.round(s * 0.75 * STAGES[this.stage(o)].k / STAGES[this.stage(p)].k));
       return { o, s: os, w: om[0].length * os, h: om.length * os, x: 10 + Math.random() * 200, dir: Math.random() < 0.5 ? 1 : -1 };
     });
@@ -1290,6 +1447,7 @@ ${recent ? '。最近：' + recent : ''}` };
         if (!mine) for (const c of cs) this.notify(c.id, `${persona(activePid()).name} 把「${p.name}」送回家了`);
         return this.renderPet();
       }
+      if (a === 'dress') return this.renderDress(p);
       if (a === 'edit') this.renderAdopt(p);
       if (a === 'show') {
         const c = pick(cs);
@@ -2137,27 +2295,53 @@ const PetGames = {
     },
   },
 
-    // ===== 大富翁：和角色一起玩，棋子是各自的宠物，可以边玩边聊 =====
+     // ===== 大富翁：人数不限，棋子是各自的宠物，可以边玩边聊 =====
   monopoly: {
-    name: '大富翁', w: 336, h: 336,
-    tip: '和认识的角色一起玩，棋子是大家的宠物。经过起点 +200。集齐同色一整组过路费翻倍。踩到自己的地可以升级。下面可以和大家聊天。',
+    name: '大富翁', w: 360, h: 360,
+    tip: '和认识的角色一起玩，人数不限，棋子是大家的宠物，每只宠物有天赋。经过起点 +¥200，集齐同色一组过路费翻倍，踩到自己的地可以升级。每 3 轮有一次全场事件。下面可以和大家聊天。',
+    // 32 格，四个角在 0 / 8 / 16 / 24
     TILES: [
       { n: '起点', k: 'start', i: '🏁' }, { n: '草莓田', g: 0, price: 60, i: '🍓' }, { n: '胡萝卜地', g: 0, price: 70, i: '🥕' },
       { n: '机会', k: 'chance', i: '❓' }, { n: '苹果园', g: 0, price: 80, i: '🍎' }, { n: '宠物税', k: 'tax', v: 80, i: '💸' },
-      { n: '宠物医院', k: 'jail', i: '🏥' }, { n: '鱼塘', g: 1, price: 100, i: '🐟' }, { n: '猫爬架', g: 1, price: 110, i: '🐈' },
-      { n: '命运', k: 'fate', i: '🔮' }, { n: '狗狗乐园', g: 1, price: 130, i: '🐕' }, { n: '公交站', k: 'bus', i: '🚌' },
-      { n: '公园', k: 'park', i: '🌳' }, { n: '玩具店', g: 2, price: 150, i: '🧸' }, { n: '机会', k: 'chance', i: '❓' },
-      { n: '零食铺', g: 2, price: 160, i: '🍪' }, { n: '美容院', g: 2, price: 180, i: '✂️' }, { n: '道具店', k: 'shop', i: '🛒' },
-      { n: '运动会', k: 'sport', i: '🏅' }, { n: '宠物咖啡', g: 3, price: 200, i: '☕' }, { n: '宠物酒店', g: 3, price: 230, i: '🏨' },
-      { n: '公交站', k: 'bus', i: '🚌' }, { n: '命运', k: 'fate', i: '🔮' }, { n: '豪华猫窝', g: 3, price: 280, i: '👑' },
+      { n: '鱼塘', g: 1, price: 100, i: '🐟' }, { n: '猫爬架', g: 1, price: 110, i: '🐈' },
+      { n: '宠物医院', k: 'jail', i: '🏥' }, { n: '狗狗乐园', g: 1, price: 120, i: '🐕' }, { n: '命运', k: 'fate', i: '🔮' },
+      { n: '公交站', k: 'bus', i: '🚌' }, { n: '玩具店', g: 2, price: 140, i: '🧸' }, { n: '零食铺', g: 2, price: 150, i: '🍪' },
+      { n: '机会', k: 'chance', i: '❓' }, { n: '美容院', g: 2, price: 160, i: '✂️' },
+      { n: '公园', k: 'park', i: '🌳' }, { n: '宠物咖啡', g: 3, price: 180, i: '☕' }, { n: '训练场', g: 3, price: 190, i: '🎾' },
+      { n: '彩票站', k: 'lottery', i: '🎰' }, { n: '摄影棚', g: 3, price: 200, i: '📸' }, { n: '公交站', k: 'bus', i: '🚌' },
+      { n: '温泉', g: 4, price: 220, i: '♨️' }, { n: '游泳池', g: 4, price: 230, i: '🏊' },
+      { n: '运动会', k: 'sport', i: '🏅' }, { n: '宠物酒店', g: 4, price: 250, i: '🏨' }, { n: '命运', k: 'fate', i: '🔮' },
+      { n: '道具店', k: 'shop', i: '🛒' }, { n: '游乐园', g: 5, price: 280, i: '🎡' }, { n: '水族馆', g: 5, price: 300, i: '🐠' },
+      { n: '传送门', k: 'portal', i: '🌀' }, { n: '豪华猫窝', g: 5, price: 350, i: '👑' },
     ],
-    GROUPS: ['#f08a9a', '#6ab0e8', '#f0c040', '#a07ad8'],
-    ITEMS: { remote: { n: '遥控骰子', i: '🎮', price: 90 }, double: { n: '双骰卡', i: '🎲', price: 60 }, free: { n: '免租卡', i: '🛡️', price: 80 } },
+    GROUPS: ['#f08a9a', '#f0a040', '#6ab0e8', '#5fbf6a', '#f0c040', '#a07ad8'],
+    ITEMS: {
+      remote: { n: '遥控骰子', i: '🎮', price: 90 }, double: { n: '双骰卡', i: '🎲', price: 60 },
+      free: { n: '免租卡', i: '🛡️', price: 80 }, steal: { n: '抢地卡', i: '🃏', price: 150 },
+    },
+    TALENTS: [
+      { k: 'rich', n: '招财', i: '💰', d: '经过起点多拿 ¥80' },
+      { k: 'bargain', n: '砍价', i: '✂️', d: '买地和升级打 8 折' },
+      { k: 'tough', n: '铁头', i: '🪖', d: '付过路费少 25%' },
+      { k: 'lucky', n: '好运', i: '🍀', d: '抽到命运时一半几率改抽机会' },
+      { k: 'swift', n: '飞毛腿', i: '💨', d: '掷出 1 自动变成 3' },
+      { k: 'landlord', n: '包租公', i: '🏠', d: '自己的地过路费 +20%' },
+    ],
+    EVENTS: [
+      { k: 'harvest', n: '丰收节', i: '🌾', d: '这一轮过路费 ×1.5' },
+      { k: 'notax', n: '免税日', i: '🎉', d: '这一轮不用交税和罚款' },
+      { k: 'sale', n: '地产大促', i: '🏷️', d: '这一轮买地 7 折' },
+      { k: 'rain', n: '红包雨', i: '🧧', d: '每人领 ¥50' },
+      { k: 'storm', n: '台风天', i: '🌀', d: '这一轮公交停运、传送门失灵' },
+    ],
 
     start(p, cv, ui, done) {
       const ctx = cv.getContext('2d'), pid = activePid(), me = persona(pid);
-      const S7 = Math.floor(cv.width / 7), N = 24, GROUPS = this.GROUPS, ITEMS = this.ITEMS;
-      const COL = ['#e04a3a', '#3a7ae0', '#3aa050', '#c060d0'];
+      const N = this.TILES.length, S = Math.floor(cv.width / 9);
+      const { GROUPS, ITEMS, TALENTS, EVENTS } = this;
+      const BASE = ['#e04a3a', '#3a7ae0', '#3aa050', '#c060d0', '#f08a20', '#20a8b0', '#d04880', '#7a6a3a'];
+      // 前 8 个用固定颜色，之后按黄金角自动生成，人再多颜色也不会重复得太近
+      const colorOf = i => BASE[i] || `hsl(${Math.round(i * 137.5) % 360},60%,45%)`;
       const LV = ['空地', '小屋', '两栋小屋', '宠物乐园'];
       const SPD = { slow: 1.6, mid: 1, fast: 0.5 };
       const C = { bg: cvar('bg'), panel: cvar('panel'), them: cvar('them'), text: cvar('text'), line: cvar('border'), acc: cvar('accent') };
@@ -2165,31 +2349,47 @@ const PetGames = {
       const wait = ms => new Promise(r => setTimeout(r, ms));
       p.games ??= {};
       let spd = SPD[p.games.monoSpd] || SPD.slow;
-      const W8 = ms => wait(ms * spd); // 受速度设置影响的等待
+      const W8 = ms => wait(ms * spd);
       const tiles = this.TILES.map(t => ({ ...t, owner: null, lv: 0 }));
-      let players = [], cur = 0, round = 1, MAX = 20, dice = [], logs = [], chat = [], evt = '', stopped = false;
+      let players = [], cur = 0, round = 1, MAX = 20, dice = [], logs = [], chat = [], evt = '', stopped = false, ev = null, hl = null;
+      let diff = 1; // 简单 1.5，普通 1，困难 0.35
 
       // ---- 规则 ----
       const byId = id => players.find(x => x.id === id);
+      const has = (pl, k) => pl?.talent?.k === k;
+      const evOn = k => ev && ev.k === k && ev.r === round;
       const others = pl => players.filter(x => x !== pl && !x.out);
       const setOwned = t => t.g != null && t.owner && tiles.filter(x => x.g === t.g).every(x => x.owner === t.owner);
-      const rent = t => Math.round(t.price * 0.2 * [1, 2.5, 5, 9][t.lv] * (setOwned(t) ? (t.lv ? 1.3 : 2) : 1));
+      const rent = t => Math.round(t.price * 0.2 * [1, 2.5, 5, 9][t.lv] * (setOwned(t) ? (t.lv ? 1.3 : 2) : 1) * (evOn('harvest') ? 1.5 : 1));
+      const rentFor = (t, payer) => Math.round(rent(t) * (has(byId(t.owner), 'landlord') ? 1.2 : 1) * (has(payer, 'tough') ? 0.75 : 1));
       const upCost = t => Math.round(t.price * 0.5);
+      const cost = (pl, v, land = false) => Math.round(v * (has(pl, 'bargain') ? 0.8 : 1) * (land && evOn('sale') ? 0.7 : 1));
       const worth = pl => pl.out ? -1 : pl.money + tiles.filter(t => t.owner === pl.id).reduce((s, t) => s + t.price + t.lv * upCost(t), 0);
-      const standing = () => [...players].sort((a, b) => worth(b) - worth(a))
+      const standing = (n = 99) => [...players].sort((a, b) => worth(b) - worth(a)).slice(0, n)
         .map(x => `${x.name}${x.out ? '（破产）' : ` 现金¥${x.money} 地${tiles.filter(t => t.owner === x.id).length}块`}`).join('，');
 
-      // ---- 棋盘坐标：7×7 外圈，起点在右下角，顺时针 ----
-      const pos = i => i <= 6 ? { x: (6 - i) * S7, y: 6 * S7 } : i <= 12 ? { x: 0, y: (12 - i) * S7 }
-        : i <= 18 ? { x: (i - 12) * S7, y: 0 } : { x: 6 * S7, y: (i - 18) * S7 };
+      // ---- 棋盘坐标：9×9 外圈，起点在右下角，顺时针 ----
+      const pos = i => i <= 8 ? { x: (8 - i) * S, y: 8 * S } : i <= 16 ? { x: 0, y: (16 - i) * S }
+        : i <= 24 ? { x: (i - 16) * S, y: 0 } : { x: 8 * S, y: (i - 24) * S };
 
+      const rr = (x, y, w, h, r) => {
+        ctx.beginPath(); ctx.moveTo(x + r, y);
+        ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+        ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
+      };
       const PIPS = { 1: [[.5, .5]], 2: [[.25, .25], [.75, .75]], 3: [[.25, .25], [.5, .5], [.75, .75]], 4: [[.25, .25], [.75, .25], [.25, .75], [.75, .75]],
         5: [[.25, .25], [.75, .25], [.5, .5], [.25, .75], [.75, .75]], 6: [[.25, .25], [.75, .25], [.25, .5], [.75, .5], [.25, .75], [.75, .75]] };
       const die = (x, y, v, sz) => {
-        ctx.fillStyle = '#fff'; ctx.fillRect(x, y, sz, sz);
-        ctx.strokeStyle = C.line; ctx.lineWidth = 2; ctx.strokeRect(x, y, sz, sz);
-        ctx.fillStyle = '#1e1e1e';
+        ctx.fillStyle = 'rgba(0,0,0,.25)'; rr(x + 2, y + 2, sz, sz, 5); ctx.fill();
+        ctx.fillStyle = '#fff'; rr(x, y, sz, sz, 5); ctx.fill();
+        ctx.strokeStyle = C.line; ctx.lineWidth = 1.5; ctx.stroke();
+        ctx.fillStyle = v === 1 ? '#e04a3a' : '#1e1e1e';
         PIPS[v].forEach(([a, b]) => { ctx.beginPath(); ctx.arc(x + a * sz, y + b * sz, sz / 10, 0, 7); ctx.fill(); });
+      };
+      const house = (x, y, c) => {
+        ctx.fillStyle = c; ctx.fillRect(x + 1, y + 3, 6, 4);
+        ctx.beginPath(); ctx.moveTo(x, y + 3); ctx.lineTo(x + 4, y); ctx.lineTo(x + 8, y + 3); ctx.fill();
+        ctx.fillStyle = '#fff'; ctx.fillRect(x + 3, y + 5, 2, 2);
       };
       const wrap = (text, maxW) => {
         const out = []; let line = '';
@@ -2199,66 +2399,88 @@ const PetGames = {
       };
 
       const draw = () => {
-        const S = S7;
+        const now = performance.now(), CW = S * 7;
         ctx.fillStyle = C.bg; ctx.fillRect(0, 0, cv.width, cv.height);
         // 中间区域
-        ctx.fillStyle = C.panel; ctx.fillRect(S, S, S * 5, S * 5);
-        ctx.globalAlpha = 0.1; ctx.font = '22px sans-serif'; ctx.textAlign = 'center';
-        [[1.7, 1.6], [5.2, 2.4], [2.2, 4.6], [5, 5.3]].forEach(([a, b]) => ctx.fillText('🐾', a * S, b * S));
+        ctx.fillStyle = C.panel; rr(S + 4, S + 4, CW - 8, CW - 8, 8); ctx.fill();
+        ctx.strokeStyle = C.line; ctx.lineWidth = 2; ctx.stroke();
+        ctx.globalAlpha = 0.08; ctx.font = '26px sans-serif'; ctx.textAlign = 'center';
+        [[2, 2.2], [7, 2.8], [2.6, 6.6], [6.8, 7.2], [4.5, 4.8]].forEach(([a, b]) => ctx.fillText('🐾', a * S, b * S));
         ctx.globalAlpha = 1;
-        ctx.fillStyle = C.text; ctx.font = 'bold 14px sans-serif';
-        ctx.fillText('🐾 宠物大富翁', S * 3.5, S + 20);
+        ctx.fillStyle = C.acc; rr(S + CW / 2 - 64, S + 10, 128, 22, 6); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = C.text; ctx.font = 'bold 13px sans-serif'; ctx.fillText('🐾 宠物大富翁', S + CW / 2, S + 26);
         ctx.font = '11px sans-serif';
-        ctx.fillText(players.length ? `第 ${Math.min(round, MAX)} / ${MAX} 轮` : '选好对手就开始', S * 3.5, S + 36);
-        if (dice.length === 1) die(S * 3.5 - 15, S + 44, dice[0], 30);
-        if (dice.length === 2) { die(S * 3.5 - 34, S + 44, dice[0], 30); die(S * 3.5 + 4, S + 44, dice[1], 30); }
-        // 最近一件事
-        ctx.font = '11px sans-serif';
-        wrap(evt, S * 4.6).slice(0, 3).forEach((l, i) => ctx.fillText(l, S * 3.5, S + 92 + i * 14));
-        // 玩家
+        const evTxt = ev && ev.r === round ? ` · ${ev.i}${ev.n}` : '';
+        ctx.fillText(players.length ? `第 ${Math.min(round, MAX)} / ${MAX} 轮${evTxt}` : '选好对手就开始', S + CW / 2, S + 46);
+        if (dice.length === 1) die(S + CW / 2 - 13, S + 54, dice[0], 26);
+        if (dice.length === 2) die(S + CW / 2 - 30, S + 54, dice[0], 26), die(S + CW / 2 + 4, S + 54, dice[1], 26);
+        ctx.font = '11px sans-serif'; ctx.fillStyle = C.text;
+        wrap(evt, CW - 24).slice(0, 2).forEach((l, i) => ctx.fillText(l, S + CW / 2, S + 96 + i * 13));
+        // 玩家列表：人多时分两列，行高自动缩小
+        const n = players.length, cols = n > 5 ? 2 : 1, top = S + 116, avail = CW - 126;
+        const rh = Math.max(12, Math.min(22, Math.floor(avail / Math.max(1, Math.ceil(n / cols))))), cw = (CW - 16) / cols;
+        const fs = Math.max(8, Math.min(11, rh - 8));
         ctx.textAlign = 'left';
         players.forEach((pl, i) => {
-          const y = S + 140 + i * 22;
-          if (i === cur && !pl.out) { ctx.globalAlpha = 0.18; ctx.fillStyle = pl.color; ctx.fillRect(S + 6, y - 2, S * 5 - 12, 20); ctx.globalAlpha = 1; }
-          Pet.drawSprite(ctx, pl.pet, S + 10, y, 1.5);
-          ctx.fillStyle = pl.color; ctx.fillRect(S + 28, y + 5, 6, 6);
-          ctx.fillStyle = C.text; ctx.font = '11px sans-serif';
-          const it = Object.entries(pl.items).filter(([, n]) => n).map(([k, n]) => ITEMS[k].i + (n > 1 ? n : '')).join('');
-          ctx.fillText(`${pl.name.slice(0, 5)}  ¥${pl.money}${pl.out ? ' 破产' : pl.skip ? ' 住院' : ''} ${it}`, S + 38, y + 12);
+          const cx = S + 8 + (i % cols) * cw, cy = top + Math.floor(i / cols) * rh;
+          if (i === cur && !pl.out) { ctx.globalAlpha = 0.22; ctx.fillStyle = pl.color; rr(cx, cy, cw - 4, rh - 2, 4); ctx.fill(); }
+          ctx.globalAlpha = pl.out ? 0.4 : 1;
+          ctx.fillStyle = pl.color; ctx.fillRect(cx + 3, cy + rh / 2 - 4, 6, 6);
+          ctx.fillStyle = C.text; ctx.font = `${fs}px sans-serif`;
+          const it = Object.entries(pl.items).filter(([, v]) => v).map(([k, v]) => ITEMS[k].i + (v > 1 ? v : '')).join('');
+          ctx.fillText(`${pl.talent.i}${pl.name.slice(0, cols > 1 ? 3 : 5)} ¥${pl.money}${pl.out ? ' 破产' : pl.skip ? ' 🏥' : ''}${cols > 1 ? '' : ' ' + it}`,
+            cx + 12, cy + rh / 2 + fs / 2 - 2);
+          ctx.globalAlpha = 1;
         });
         // 格子
         ctx.textAlign = 'center';
         tiles.forEach((t, i) => {
-          const { x, y } = pos(i), o = t.owner && byId(t.owner), corner = i % 6 === 0;
-          ctx.fillStyle = corner ? C.acc : C.them; ctx.fillRect(x + 1, y + 1, S - 2, S - 2);
-          if (o) { ctx.globalAlpha = 0.2; ctx.fillStyle = o.color; ctx.fillRect(x + 1, y + 1, S - 2, S - 2); ctx.globalAlpha = 1; }
-          if (t.g != null) { ctx.fillStyle = GROUPS[t.g]; ctx.fillRect(x + 1, y + 1, S - 2, 6); }
-          ctx.strokeStyle = o ? o.color : C.line; ctx.lineWidth = o ? 2 : 1;
-          ctx.strokeRect(x + 1.5, y + 1.5, S - 3, S - 3);
+          const { x, y } = pos(i), o = t.owner && byId(t.owner), corner = i % 8 === 0;
+          ctx.fillStyle = corner ? C.acc : C.them; rr(x + 1, y + 1, S - 2, S - 2, 4); ctx.fill();
+          if (o) { ctx.globalAlpha = 0.2; ctx.fillStyle = o.color; ctx.fill(); ctx.globalAlpha = 1; }
+          if (t.g != null) { ctx.fillStyle = GROUPS[t.g]; rr(x + 3, y + 3, S - 6, 5, 2); ctx.fill(); }
+          const lit = hl && hl.i === i && now - hl.t < 1500;
+          ctx.strokeStyle = lit ? hl.c : o ? o.color : C.line; ctx.lineWidth = lit ? 3 : o ? 2 : 1;
+          rr(x + 1.5, y + 1.5, S - 3, S - 3, 4); ctx.stroke();
           ctx.fillStyle = C.text; ctx.font = '8px sans-serif';
-          ctx.fillText(t.n.slice(0, 4), x + S / 2, y + 15);
+          ctx.fillText(t.n.slice(0, 4), x + S / 2, y + (t.g != null ? 16 : 12));
           ctx.font = corner ? '18px sans-serif' : '14px sans-serif';
-          ctx.fillText(t.i, x + S / 2, y + 33);
+          ctx.fillText(t.i, x + S / 2, y + 30);
           if (t.price) {
-            ctx.font = '8px sans-serif'; ctx.fillStyle = C.text;
-            if (t.lv === 3) { ctx.fillStyle = '#e04a3a'; ctx.fillRect(x + S / 2 - 8, y + S - 10, 16, 6); }
-            else if (t.lv) for (let k = 0; k < t.lv; k++) { ctx.fillStyle = '#3aa050'; ctx.fillRect(x + S / 2 - 8 + k * 10, y + S - 10, 6, 6); }
-            else ctx.fillText(o ? '租' + rent(t) : '¥' + t.price, x + S / 2, y + S - 4);
+            if (t.lv === 3) { ctx.font = '10px sans-serif'; ctx.fillText('🏰', x + S / 2, y + S - 3); }
+            else if (t.lv) for (let k = 0; k < t.lv; k++) house(x + S / 2 - t.lv * 5 + k * 10 + 1, y + S - 10, '#3aa050');
+            else { ctx.font = '8px sans-serif'; ctx.fillStyle = C.text; ctx.fillText(o ? '租' + rent(t) : '¥' + t.price, x + S / 2, y + S - 4); }
+          }
+          if (o) { // 主人的小旗子
+            ctx.fillStyle = C.line; ctx.fillRect(x + 4, y + S - 13, 1, 9);
+            ctx.fillStyle = o.color; ctx.beginPath(); ctx.moveTo(x + 5, y + S - 13); ctx.lineTo(x + 11, y + S - 10.5); ctx.lineTo(x + 5, y + S - 8); ctx.fill();
           }
         });
-        // 棋子
-        const bob = Math.floor(performance.now() / 300) % 2;
-        players.forEach((pl, k) => {
-          if (pl.out) return;
-          const { x, y } = pos(pl.pos), ox = x + 5 + (k % 2) * 22, oy = y + 16 + (k >> 1) * 15;
-          ctx.fillStyle = pl.color; ctx.fillRect(ox, oy + 14, 14, 2);
-          Pet.drawSprite(ctx, pl.pet, ox, oy - (k === cur ? bob : 0), 1.4);
-        });
+        // 棋子：同一格的人按网格排开，人多就缩小
+        const at = {};
+        players.forEach(pl => { if (!pl.out) (at[pl.pos] ??= []).push(pl); });
+        const bob = Math.floor(now / 250) % 2;
+        for (const [i, list] of Object.entries(at)) {
+          const { x, y } = pos(Number(i)), m = list.length, cols2 = Math.ceil(Math.sqrt(m)), rows2 = Math.ceil(m / cols2);
+          const cw2 = (S - 6) / cols2, ch2 = (S - 18) / rows2, ts = Math.max(0.5, Math.min(1.4, cw2 / 10, ch2 / 10));
+          list.forEach((pl, k) => {
+            const ox = x + 3 + (k % cols2) * cw2 + (cw2 - 10 * ts) / 2, oy = y + 16 + Math.floor(k / cols2) * ch2 + (ch2 - 10 * ts) / 2;
+            const isCur = players[cur] === pl;
+            ctx.globalAlpha = 0.25; ctx.fillStyle = '#000';
+            ctx.beginPath(); ctx.ellipse(ox + 5 * ts, oy + 10 * ts, 5 * ts, 1.6 * ts, 0, 0, 7); ctx.fill();
+            ctx.globalAlpha = 1;
+            ctx.fillStyle = pl.color; ctx.fillRect(ox, oy + 10 * ts, 10 * ts, Math.max(1.5, 2 * ts));
+            Pet.drawSprite(ctx, pl.pet, ox, oy - (isCur ? bob * 2 : 0), ts);
+            if (isCur) {
+              ctx.fillStyle = pl.color; ctx.beginPath();
+              ctx.moveTo(ox + 5 * ts - 4, oy - 8); ctx.lineTo(ox + 5 * ts + 4, oy - 8); ctx.lineTo(ox + 5 * ts, oy - 3); ctx.fill();
+            }
+          });
+        }
       };
-      // 棋子会上下跳，隔一会儿重画一次
-      const animT = setInterval(() => { if (!stopped && players.length) draw(); }, 300);
+      const animT = setInterval(() => { if (!stopped && players.length) draw(); }, 150);
 
-      // ---- 下方界面：动态记录 / 操作按钮 / 聊天 ----
+      // ---- 下方界面 ----
       const $u = s => $(s, ui);
       const log = (text, pl = null) => {
         evt = text;
@@ -2277,31 +2499,33 @@ const PetGames = {
         box.onclick = e => {
           const b = e.target.closest('[data-o]');
           if (!b) return;
-          box.innerHTML = '';
-          box.onclick = null;
+          box.innerHTML = ''; box.onclick = null;
           res(opts[b.dataset.o].value);
         };
       });
 
-      // ---- 聊天：你发消息角色会回；游戏里发生大事时角色也会主动说几句 ----
+      // ---- 聊天：人多时每次最多带 4 个人的设定，控制 API 费用 ----
       let talking = false, lastTalk = 0, pendingUser = '';
       const addChat = (id, name, text) => {
         chat.push({ id, name, text });
         const box = $u('#mono-msgs');
         if (!box) return;
-        const color = byId(id)?.color || C.text;
         box.innerHTML = chat.slice(-40).map(c => `<div class="mono-c${c.id === 'user' ? ' me' : ''}"><b style="color:${byId(c.id)?.color || C.text}">${esc(c.name)}</b>：${esc(c.text)}</div>`).join('');
         box.scrollTop = box.scrollHeight;
       };
-      const aiTalk = async (desc, sid, userText) => {
-        const cs = players.slice(1).map(x => charById(x.id)).filter(Boolean), names = cs.map(c => c.name), sp = sid && charById(sid);
+            const aiTalk = async (desc, sid, userText) => {
+        const cs = players.slice(1).map(x => charById(x.id)).filter(Boolean), sp = sid && charById(sid);
+        const names = cs.map(c => c.name);
+        const wb = WB.build(cs.map(c => c.id), '').constant;
         const system = [
           `你在同时扮演${names.join('、')}。他们正在和${me.name}用手机玩一局宠物大富翁（棋子是各自的宠物），大家边玩边在游戏的聊天框里打字聊天。`,
-          ...cs.map(c => `【${c.name}的设定】\n${(c.persona || '（无）').slice(0, 800)}\n和${me.name}的关系：${getRel(pid, c.id).desc || '认识'}`),
+          wb && `【世界设定】\n${wb}`,
+          ...cs.map(c => `【${c.name}的设定】\n${(c.persona || '（见世界设定）').slice(0, 800)}\n和${me.name}的关系：${getRel(pid, c.id).desc || '认识'}`),
           `【要求】\n- 每行一条，格式：名字：内容。名字只能是${names.join('、')}，绝对不要替${me.name}说话。\n- 一共 1 到 3 条，都很短，像打游戏时随手打的字：得意、心疼钱、吐槽、起哄、互相拆台都可以，要符合各自的性格和关系。\n- 不写动作、神态和旁白。`,
-        ].join('\n\n');
+        ].filter(Boolean).join('\n\n');
+
         const task = [
-          `【局面】第 ${round}/${MAX} 轮。${standing()}`,
+          `【局面】第 ${round}/${MAX} 轮。${standing(6)}`,
           `【刚才发生的】\n${logs.slice(0, 6).reverse().map(l => l.text).join('\n')}`,
           chat.length && `【聊天框】\n${chat.slice(-8).map(x => x.name + '：' + x.text).join('\n')}`,
           userText ? `${me.name}刚刚在聊天框说：${userText}。要有人回应。` : `${desc}。${sp ? `这次主要是${sp.name}开口，` : ''}说一两句就行。`,
@@ -2326,7 +2550,6 @@ const PetGames = {
           if (pendingUser && !stopped) { const u = pendingUser; pendingUser = ''; talk('', null, u); }
         }
       };
-      // 自动反应：至少隔 15 秒，而且不是每次都说，省 API 费用
       const react = (desc, sid = null) => {
         if (talking || Date.now() - lastTalk < 15000 || Math.random() > 0.55) return;
         talk(desc, sid);
@@ -2352,19 +2575,22 @@ const PetGames = {
         if (to && !to.out) to.money += amt;
         if (from.money < 0) liquidate(from);
       };
+      // 税和罚款：免税日不用交
+      const fine = (pl, amt, msg = '') => {
+        if (evOn('notax')) return log(`${msg || pl.name + '要交 ¥' + amt}，但今天免税日，免了`, pl);
+        if (msg) log(msg, pl);
+        pay(pl, null, amt);
+      };
 
       // ---- 移动 ----
       const walk = async (pl, n) => {
         for (let i = 0; i < n && !stopped; i++) {
           pl.pos = (pl.pos + 1) % N;
-          if (pl.pos === 0) { pl.money += 200; log(`${pl.name}经过起点，领了 ¥200`, pl); }
-          draw();
-          await W8(280);
+          if (pl.pos === 0) { const b = 200 + (has(pl, 'rich') ? 80 : 0); pl.money += b; log(`${pl.name}经过起点，领了 ¥${b}`, pl); }
+          draw(); await W8(220);
         }
       };
-      const back = async (pl, n) => {
-        for (let i = 0; i < n && !stopped; i++) { pl.pos = (pl.pos - 1 + N) % N; draw(); await W8(280); }
-      };
+      const back = async (pl, n) => { for (let i = 0; i < n && !stopped; i++) { pl.pos = (pl.pos - 1 + N) % N; draw(); await W8(220); } };
       const moveTo = (pl, idx) => walk(pl, (idx - pl.pos + N) % N);
 
       // ---- 卡片 ----
@@ -2374,15 +2600,17 @@ const PetGames = {
         ['获得一个遥控骰子 🎮', pl => { pl.items.remote++; }],
         ['获得一张免租卡 🛡️', pl => { pl.items.free++; }],
         ['获得一张双骰卡 🎲', pl => { pl.items.double++; }],
+        ['获得一张抢地卡 🃏', pl => { pl.items.steal++; }],
         ['宠物撒腿狂奔，向前 3 格', async pl => { await walk(pl, 3); await land(pl); }],
         ['宠物想家了，直接跑回起点', async pl => { await moveTo(pl, 0); }],
-        ['朋友叫你们去公园玩', async pl => { await moveTo(pl, 12); await land(pl); }],
+        ['朋友叫你们去公园玩', async pl => { await moveTo(pl, 16); await land(pl); }],
       ];
       const FATE = [
-        ['宠物打翻了邻居的花盆，赔 ¥80', pl => pay(pl, null, 80)],
-        ['宠物随地便便被罚款 ¥50', pl => pay(pl, null, 50)],
-        ['宠物吃坏了肚子，直接去医院住一轮', pl => { pl.pos = 6; pl.skip = 1; }],
-        ['给所有房子做维修，每级 ¥25', pl => { const n = tiles.filter(t => t.owner === pl.id).reduce((s, t) => s + t.lv, 0); pay(pl, null, n * 25); log(`一共 ${n} 级，付了 ¥${n * 25}`, pl); }],
+        ['宠物打翻了邻居的花盆，赔 ¥80', pl => fine(pl, 80)],
+        ['宠物随地便便被罚款 ¥50', pl => fine(pl, 50)],
+        ['宠物在美容院乱跑，付 ¥40 清洁费', pl => fine(pl, 40)],
+        ['宠物吃坏了肚子，直接去医院住一轮', pl => { pl.pos = 8; pl.skip = 1; }],
+        ['给所有房子做维修，每级 ¥25', pl => { const n = tiles.filter(t => t.owner === pl.id).reduce((s, t) => s + t.lv, 0); if (n) fine(pl, n * 25, `一共 ${n} 级，付了 ¥${n * 25}`); }],
         ['今天是你宠物的生日，每人送你 ¥30', pl => others(pl).forEach(o => pay(o, pl, 30))],
         ['请大家喝奶茶，每人 ¥25', pl => others(pl).forEach(o => pay(pl, o, 25))],
         ['宠物被路边的猫吓得后退 2 格', async pl => { await back(pl, 2); await land(pl); }],
@@ -2393,16 +2621,21 @@ const PetGames = {
       ];
 
       // ---- 角色的决策（本地规则，不调 AI） ----
-      const aiBuy = (pl, t) => {
-        const completes = tiles.filter(x => x.g === t.g && x !== t).every(x => x.owner === pl.id);
-        return pl.money - t.price >= 120 + (1 - pl.greed) * 280 || (completes && pl.money - t.price >= 50);
+           // 买完要留多少钱：难度越高留得越少。后期（剩不到 1/4 轮数）买地回不了本，会收手一点
+      const reserve = pl => (80 + (1 - pl.greed) * 200) * diff * (round > MAX * 0.75 ? 1.5 : 1);
+      const aiBuy = (pl, t, price) => {
+        const grp = tiles.filter(x => x.g === t.g && x !== t);
+        const completes = grp.every(x => x.owner === pl.id);
+        // 困难模式下会抢别人快集齐的组，防止对方翻倍
+        const block = diff < 1 && grp.length && grp.every(x => x.owner && x.owner !== pl.id && x.owner === grp[0].owner);
+        return pl.money - price >= reserve(pl) || ((completes || block) && pl.money - price >= 30);
       };
-      const aiUp = (pl, c) => pl.money - c >= 200 + (1 - pl.greed) * 300;
+      const aiUp = (pl, c) => pl.money - c >= reserve(pl) * 1.5;
       const aiRemote = pl => {
         let best = 0, bv = 0;
         for (let v = 1; v <= 6; v++) {
           const t = tiles[(pl.pos + v) % N];
-          const sc = t.price ? (!t.owner ? (pl.money > t.price ? t.price : 0) : t.owner === pl.id ? 50 : -rent(t)) : 0;
+          const sc = t.price ? (!t.owner ? (pl.money > t.price ? t.price : 0) : t.owner === pl.id ? 50 : -rentFor(t, pl)) : 0;
           if (sc > bv) { bv = sc; best = v; }
         }
         return bv > 0 && Math.random() < 0.7 ? best : 0;
@@ -2412,19 +2645,21 @@ const PetGames = {
       const land = async pl => {
         if (stopped || pl.out) return;
         const t = tiles[pl.pos], mine = pl.id === 'user';
+        hl = { i: pl.pos, t: performance.now(), c: pl.color };
         if (t.price) {
           if (!t.owner) {
-            if (pl.money < t.price) return log(`${pl.name}想买${t.n}，可惜钱不够`, pl);
-            const yes = mine ? await ask([{ label: `买下${t.n}（¥${t.price}）`, value: true }, { label: '不买', value: false }]) : aiBuy(pl, t);
+            const price = cost(pl, t.price, true);
+            if (pl.money < price) return log(`${pl.name}想买${t.n}，可惜钱不够`, pl);
+            const yes = mine ? await ask([{ label: `买下${t.n}（¥${price}${price < t.price ? '，原价 ¥' + t.price : ''}）`, value: true }, { label: '不买', value: false }]) : aiBuy(pl, t, price);
             if (stopped) return;
             if (!yes) return log(`${pl.name}没买${t.n}`, pl);
-            pl.money -= t.price; t.owner = pl.id;
+            pl.money -= price; t.owner = pl.id;
             log(`${pl.name}买下了${t.i}${t.n}`, pl);
             if (setOwned(t)) log(`${pl.name}集齐了一整组，这组过路费翻倍`, pl);
             if (!mine) react(`${pl.name}刚买下了${t.n}${setOwned(t) ? '，还集齐了一整组' : ''}`, pl.id);
           } else if (t.owner === pl.id) {
             if (t.lv >= 3) return log(`${pl.name}在自己的${t.n}转了一圈`, pl);
-            const c = upCost(t);
+            const c = cost(pl, upCost(t));
             if (pl.money < c) return log(`${pl.name}想升级${t.n}，钱不够`, pl);
             const yes = mine
               ? await ask([{ label: `升级成${LV[t.lv + 1]}（¥${c}，过路费 ${rent(t)}→${rent({ ...t, lv: t.lv + 1 })}）`, value: true }, { label: '先不升级', value: false }])
@@ -2434,16 +2669,29 @@ const PetGames = {
             log(`${pl.name}把${t.n}升级成了${LV[t.lv]}`, pl);
             if (!mine && t.lv === 3) react(`${pl.name}把${t.n}升成了宠物乐园，过路费很贵`, pl.id);
           } else {
-            const o = byId(t.owner), r = rent(t);
-            if (pl.items.free) {
-              const use = mine ? await ask([{ label: `用免租卡（还剩 ${pl.items.free} 张）`, value: true }, { label: `付 ¥${r}`, value: false }]) : r >= 60;
+            const o = byId(t.owner), r = rentFor(t, pl);
+            const opts = [];
+            if (pl.items.free) opts.push({ label: `🛡️ 用免租卡（还剩 ${pl.items.free} 张）`, value: 'free' });
+            if (pl.items.steal && t.lv === 0 && !setOwned(t) && pl.money >= t.price) opts.push({ label: `🃏 用抢地卡，付 ¥${t.price} 给${o.name}，把地买过来`, value: 'steal' });
+            let use = null;
+            if (opts.length) {
+              use = mine ? await ask([...opts, { label: `付过路费 ¥${r}`, value: null }])
+                : opts.some(x => x.value === 'steal') && pl.money - t.price > 250 ? 'steal'
+                : opts.some(x => x.value === 'free') && r >= 60 ? 'free' : null;
               if (stopped) return;
-              if (use) {
-                pl.items.free--;
-                log(`${pl.name}用免租卡躲过了${o.name}的 ¥${r}`, pl);
-                if (mine || o.id === 'user') react(`${pl.name}用免租卡躲过了${o.name}的过路费`, mine ? o.id : pl.id);
-                return;
-              }
+            }
+            if (use === 'free') {
+              pl.items.free--;
+              log(`${pl.name}用免租卡躲过了${o.name}的 ¥${r}`, pl);
+              if (mine || o.id === 'user') react(`${pl.name}用免租卡躲过了${o.name}的过路费`, mine ? o.id : pl.id);
+              return;
+            }
+            if (use === 'steal') {
+              pl.items.steal--;
+              pay(pl, o, t.price); t.owner = pl.id;
+              log(`🃏 ${pl.name}用抢地卡把${o.name}的${t.n}买走了`, pl);
+              react(`${pl.name}用抢地卡抢走了${o.name}的${t.n}`, mine ? o.id : pl.id);
+              return;
             }
             log(`${pl.name}踩到${o.name}的${t.n}，付过路费 ¥${r}`, pl);
             pay(pl, o, r);
@@ -2452,39 +2700,60 @@ const PetGames = {
           return;
         }
         if (t.k === 'start') { pl.money += 100; log(`${pl.name}正好停在起点，额外奖励 ¥100`, pl); }
-        else if (t.k === 'tax') { log(`${pl.name}交了宠物税 ¥${t.v}`, pl); pay(pl, null, t.v); }
-        else if (t.k === 'jail') { log(`${pl.name}带宠物去体检，花了 ¥30`, pl); pay(pl, null, 30); }
+        else if (t.k === 'tax') fine(pl, t.v, `${pl.name}交了宠物税 ¥${t.v}`);
+        else if (t.k === 'jail') fine(pl, 30, `${pl.name}带宠物去体检，花了 ¥30`);
         else if (t.k === 'sport') {
           await W8(500);
           const d = 1 + R(6); dice = [d]; draw();
           pl.money += d * 30;
           log(`${pl.name}的宠物在运动会上掷出 ${d}，拿到奖金 ¥${d * 30}`, pl);
         } else if (t.k === 'park') {
-          const a = mine ? await ask([{ label: '捡 ¥50', value: 'money' }, { label: '随机拿一个道具', value: 'item' }]) : 'money';
+                   const a = mine ? await ask([{ label: '捡 ¥50', value: 'money' }, { label: '随机拿一个道具', value: 'item' }])
+            : diff < 1 && Math.random() < 0.5 ? 'item' : 'money';
           if (stopped) return;
           if (a === 'money') { pl.money += 50; log(`${pl.name}在公园捡到 ¥50`, pl); }
           else { const k = pick(Object.keys(ITEMS)); pl.items[k]++; log(`${pl.name}在公园捡到一个${ITEMS[k].i}${ITEMS[k].n}`, pl); }
         } else if (t.k === 'bus') {
+          if (evOn('storm')) return log(`台风天公交停运，${pl.name}只能干等`, pl);
           const to = pl.pos === 11 ? 21 : 11;
-          const yes = mine ? await ask([{ label: `花 ¥30 坐车去另一个公交站`, value: true }, { label: '不坐', value: false }]) : pl.money > 300 && Math.random() < 0.5;
+          const yes = mine ? await ask([{ label: '花 ¥30 坐车去另一个公交站', value: true }, { label: '不坐', value: false }]) : pl.money > 300 && Math.random() < 0.5;
           if (stopped || !yes || pl.money < 30) return;
           pay(pl, null, 30);
           if (to < pl.pos) { pl.money += 200; log(`${pl.name}坐车路过起点，领了 ¥200`, pl); }
           pl.pos = to;
           log(`${pl.name}坐公交到了另一边`, pl);
+        } else if (t.k === 'lottery') {
+          if (pl.money < 20) return log(`${pl.name}连彩票都买不起`, pl);
+          const yes = mine ? await ask([{ label: '花 ¥20 买一张彩票', value: true }, { label: '不买', value: false }]) : pl.money > 200 && Math.random() < 0.6;
+          if (stopped || !yes) return;
+          pay(pl, null, 20);
+          const r = Math.random(), win = r < 0.05 ? 500 : r < 0.2 ? 150 : r < 0.55 ? 50 : 0;
+          pl.money += win;
+          log(win ? `🎰 ${pl.name}刮中了 ¥${win}${win >= 500 ? '，头奖！' : ''}` : `${pl.name}的彩票什么都没中`, pl);
+          if (win >= 150) react(`${pl.name}买彩票中了 ¥${win}`, mine ? null : pl.id);
+        } else if (t.k === 'portal') {
+          if (evOn('storm')) return log('台风天，传送门失灵了', pl);
+          const idx = pick(tiles.map((x, i) => (x.price ? i : -1)).filter(i => i >= 0));
+          await W8(500);
+          pl.pos = idx;
+          log(`🌀 ${pl.name}被传送到了${tiles[idx].n}`, pl);
+          await W8(500);
+          await land(pl);
         } else if (t.k === 'shop') {
           const can = Object.entries(ITEMS).filter(([, v]) => pl.money >= v.price);
           if (!can.length) return log(`${pl.name}逛了逛道具店，什么都买不起`, pl);
           const k = mine
             ? await ask([...can.map(([k, v]) => ({ label: `买${v.i}${v.n}（¥${v.price}）`, value: k })), { label: '不买', value: null }])
-            : pl.money > 700 && Math.random() < pl.greed ? pick(can)[0] : null;
+                       : pl.money > 700 * diff && Math.random() < pl.greed ? pick(can)[0] : null;
           if (stopped) return;
           if (!k) return log(`${pl.name}在道具店逛了一圈，没买`, pl);
           pl.money -= ITEMS[k].price; pl.items[k]++;
           log(`${pl.name}买了一个${ITEMS[k].i}${ITEMS[k].n}`, pl);
         } else if (t.k === 'chance' || t.k === 'fate') {
-          const [text, fn] = pick(t.k === 'chance' ? CHANCE : FATE);
-          log(`${pl.name}抽到${t.k === 'chance' ? '机会' : '命运'}：${text}`, pl);
+          let kind = t.k;
+          if (kind === 'fate' && has(pl, 'lucky') && Math.random() < 0.5) { kind = 'chance'; log(`🍀 ${pl.name}运气好，改抽了一张机会`, pl); await W8(600); }
+          const [text, fn] = pick(kind === 'chance' ? CHANCE : FATE);
+          log(`${pl.name}抽到${kind === 'chance' ? '机会' : '命运'}：${text}`, pl);
           await W8(900);
           await fn(pl);
         }
@@ -2500,7 +2769,7 @@ const PetGames = {
             const a = await ask([{ label: '等一轮', value: 'wait' }, ...(pl.money >= 50 ? [{ label: '花 ¥50 提前出院', value: 'pay' }] : [])]);
             if (a === 'pay') { pay(pl, null, 50); pl.skip = 0; log(`${pl.name}花 ¥50 让宠物提前出院`, pl); }
           } else if (pl.money > 600 && Math.random() < 0.6) { pay(pl, null, 50); pl.skip = 0; log(`${pl.name}花 ¥50 让宠物提前出院`, pl); }
-          if (pl.skip) { pl.skip--; log(`${pl.name}的宠物还在住院，这轮休息`, pl); await W8(1200); return; }
+          if (pl.skip) { pl.skip--; log(`${pl.name}的宠物还在住院，这轮休息`, pl); await W8(1000); return; }
         }
         let two = false, fixed = 0;
         if (pl.id === 'user') {
@@ -2515,7 +2784,7 @@ const PetGames = {
           }
         } else {
           actBox(`<p class="mono-wait">${esc(pl.name)}在想……</p>`);
-          await W8(1000);
+          await W8(800);
           if (pl.items.remote) { const v = aiRemote(pl); if (v) { pl.items.remote--; fixed = v; } }
           if (!fixed && pl.items.double && Math.random() < 0.3) { pl.items.double--; two = true; }
         }
@@ -2524,15 +2793,17 @@ const PetGames = {
         if (fixed) { dice = [fixed]; n = fixed; log(`${pl.name}用了遥控骰子，走 ${n} 步`, pl); }
         else {
           for (let i = 0; i < 8; i++) { dice = Array.from({ length: two ? 2 : 1 }, () => 1 + R(6)); draw(); await wait(80); }
+          const raw = dice.join(' + ');
+          if (has(pl, 'swift') && dice.includes(1)) dice = dice.map(d => (d === 1 ? 3 : d));
           n = dice.reduce((a, b) => a + b, 0);
-          log(`${pl.name}${two ? '用了双骰卡，' : ''}掷出了 ${dice.join(' + ')}${two ? ' = ' + n : ''}`, pl);
+          log(`${pl.name}${two ? '用了双骰卡，' : ''}掷出了 ${raw}${raw !== dice.join(' + ') ? `（💨飞毛腿：变成 ${dice.join(' + ')}）` : ''}${two ? ' = ' + n : ''}`, pl);
         }
-        await W8(700);
+        await W8(600);
         await walk(pl, n);
         if (stopped) return;
         await land(pl);
         if (pl.id !== 'user') actBox('');
-        await W8(pl.id === 'user' ? 500 : 1000);
+        await W8(pl.id === 'user' ? 400 : 800);
       };
 
       const finishGame = async () => {
@@ -2550,7 +2821,6 @@ const PetGames = {
           $('[data-again]', box).onclick = () => Pet.renderGame('monopoly');
         }
         done(place === 1 ? 20 : Math.max(2, 12 - place * 3));
-        // 写进每个角色的私聊，之后聊天时角色会记得这局
         const chars = players.slice(1).map(x => charById(x.id)).filter(Boolean);
         for (const c of chars) await addMsg(Conv.dm(pid, c.id), 'user', `${me.name} 和 ${chars.map(x => x.name).join('、')} 一起玩了一局宠物大富翁。${summary}`, 'sys');
         for (let i = 0; i < 40 && talking; i++) await wait(250);
@@ -2567,21 +2837,34 @@ const PetGames = {
           if (cur === 0) {
             if (++round > MAX) break;
             log(`—— 第 ${round} 轮 ——`);
-            if (round % 6 === 0) react(`已经第 ${round} 轮了，现在的局势：${standing()}`);
+            if (round % 3 === 0) {
+              const e = pick(EVENTS);
+              ev = { ...e, r: round };
+              log(`📣 全场事件：${e.i}${e.n}，${e.d}`);
+              if (e.k === 'rain') players.filter(x => !x.out).forEach(x => { x.money += 50; });
+              react(`全场事件：${e.n}（${e.d}）`);
+            } else if (round % 6 === 1) react(`已经第 ${round} 轮了，现在的局势：${standing(6)}`);
           }
         }
         if (!stopped) finishGame();
       };
 
-      const begin = chars => {
-        const sps = Object.keys(SPECIES), items = () => ({ remote: 0, double: 0, free: 0 });
-        players = [
-          { id: 'user', name: me.name, pet: p, money: 1500, pos: 0, out: false, skip: 0, color: COL[0], items: items() },
+      // 天赋：跑得快的动物固定是飞毛腿，其他随机
+      const talentFor = pet => (TRAITS[pet.sp]?.speed >= 1.3 ? TALENTS.find(t => t.k === 'swift') : pick(TALENTS.filter(t => t.k !== 'swift')));
+      // 某人能当棋子的宠物：我的 / 某个角色参与养的
+      const myPets = () => Pet.list.filter(x => Pet.isMine(x) && Pet.visible(x));
+      const petsOf = cid => Pet.list.filter(x => x.owners.includes(cid) && Pet.visible(x));
+      const petName = x => `${x.name}（${SPECIES[x.sp].name}）`;
+            const begin = (chars, money, myPet = p, picks = {}) => {
+        const sps = Object.keys(SPECIES), items = () => ({ remote: 0, double: 0, free: 0, steal: 0 });
+               players = [
+          { id: 'user', name: me.name, pet: myPet, money, pos: 0, out: false, skip: 0, color: colorOf(0), items: items(), talent: talentFor(myPet) },
           ...chars.map((c, i) => {
-            // 优先用角色自己养的宠物，没有就临时借一只
-            let pet = Pet.list.find(x => x.owners.includes(c.id) && Pet.visible(x));
+            // 你选了的那只不给角色用，免得棋盘上出现两只一样的
+            const own = petsOf(c.id).filter(x => x !== myPet);
+            let pet = own.find(x => x.id === picks[c.id]) || (own.length ? pick(own) : null);
             if (!pet) { const sp = pick(sps); pet = { sp, color: R(SPECIES[sp].colors.length) }; }
-            return { id: c.id, name: c.name, pet, money: 1500, pos: 0, out: false, skip: 0, color: COL[i + 1], greed: 0.3 + Math.random() * 0.6, items: items() };
+            return { id: c.id, name: c.name, pet, money, pos: 0, out: false, skip: 0, color: colorOf(i + 1), greed: 0.3 + Math.random() * 0.6, items: items(), talent: talentFor(pet) };
           }),
         ];
         ui.innerHTML = `<div class="mono-bar"><span id="mono-turn"></span>
@@ -2602,34 +2885,55 @@ const PetGames = {
         };
         $('[data-send]', ui).onclick = send;
         $u('#mono-in').onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); send(); } };
-        log('游戏开始，大家都有 ¥1500');
+        log(`游戏开始，${players.length} 个人，每人 ¥${money}`);
+        log('宠物天赋：' + players.map(x => `${x.name}${x.talent.i}${x.talent.n}`).join('，'));
         talk('游戏刚开始，大家打个招呼、放放狠话');
         loop();
       };
 
-      // ---- 开局设置 ----
+            // ---- 开局设置：人数不限 ----
       const cands = S.chars.filter(c => knows(pid, c.id) && !getRel(pid, c.id).theyBlock);
       draw();
       if (!cands.length) {
         ui.innerHTML = '<p class="empty">还没有认识的角色，先去关系网里设置一下吧。</p>';
         return { stop() { stopped = true; clearInterval(animT); } };
       }
-      ui.innerHTML = `<h3>和谁一起玩（1 到 3 个）</h3><div class="card">${cands.map(c => `<label class="row"><span>${esc(c.name)}</span>
-          <input type="checkbox" data-mc="${c.id}"></label>`).join('')}</div>
+      const mine = myPets();
+      // 角色后面的棋子选择：一只就直接显示名字，多只给下拉框
+      const charSel = c => {
+        const own = petsOf(c.id);
+        if (own.length <= 1) return `<small>${own.length ? esc(petName(own[0])) : '临时借一只'}</small>`;
+        return `<select data-mp="${c.id}" style="width:auto;max-width:45%" aria-label="${esc(c.name)}的棋子">
+          <option value="">随机</option>${own.map(x => `<option value="${x.id}">${esc(petName(x))}</option>`).join('')}</select>`;
+      };
+      ui.innerHTML = `${mine.length > 1 ? `<label class="field"><span>我的棋子</span><select id="mono-me">${mine.map(x =>
+          `<option value="${x.id}" ${x === p ? 'selected' : ''}>${esc(petName(x))}</option>`).join('')}</select></label>` : ''}
+        <h3>和谁一起玩</h3>
+        <div class="flex" style="margin-bottom:6px"><button class="btn ghost sm" data-all>全选 / 全不选</button><small id="mono-cnt">已选 0 人</small></div>
+        <div class="card mono-pick">${cands.map(c => `<div class="row" style="cursor:default">
+          <label class="flex" style="flex:1;margin:0;cursor:pointer"><input type="checkbox" data-mc="${c.id}"><span>${esc(c.name)}</span></label>
+          ${charSel(c)}</div>`).join('')}</div>
         <div class="flex" style="gap:8px">
-          <label class="field" style="flex:1"><span>轮数</span><select id="mono-r"><option>20</option><option>30</option><option>40</option></select></label>
+          <label class="field" style="flex:1"><span>轮数</span><select id="mono-r"><option>15</option><option selected>20</option><option>30</option><option>40</option></select></label>
+          <label class="field" style="flex:1"><span>起始资金</span><select id="mono-m"><option>1000</option><option selected>1500</option><option>2000</option></select></label>
           <label class="field" style="flex:1"><span>速度</span><select id="mono-s"><option value="slow">慢</option><option value="mid">中</option><option value="fast">快</option></select></label>
         </div>
+        <p class="hint">人越多一轮越久，建议人多时选「快」。</p>
         <button class="btn" data-start style="margin-top:8px">开始</button>`;
       $u('#mono-s').value = p.games.monoSpd || 'slow';
+      const boxes = () => $$('[data-mc]', ui);
+      const count = () => { $u('#mono-cnt').textContent = `已选 ${boxes().filter(x => x.checked).length} 人`; };
+      boxes().forEach(b => { b.onchange = count; });
+      $('[data-all]', ui).onclick = () => { const on = !boxes().every(x => x.checked); boxes().forEach(x => { x.checked = on; }); count(); };
       $('[data-start]', ui).onclick = () => {
-        const ids = $$('[data-mc]', ui).filter(x => x.checked).map(x => x.dataset.mc);
+        const ids = boxes().filter(x => x.checked).map(x => x.dataset.mc);
         if (!ids.length) return toast('至少选一个角色');
-        if (ids.length > 3) return toast('最多 3 个');
         MAX = Number($u('#mono-r').value);
         p.games.monoSpd = $u('#mono-s').value;
         spd = SPD[p.games.monoSpd];
-        begin(ids.map(charById));
+        const myPet = Pet.get($u('#mono-me')?.value) || p;
+        const picks = Object.fromEntries($$('[data-mp]', ui).map(s => [s.dataset.mp, s.value]));
+        begin(ids.map(charById).filter(Boolean), Number($u('#mono-m').value), myPet, picks);
       };
       return { stop() { stopped = true; clearInterval(animT); } };
     },
