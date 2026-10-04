@@ -576,6 +576,45 @@ Views.mems = async ({ charId }) => {
     if (a === 'del' && await confirmBox('删除这条记忆')) { await DB.del('mems', m.id); Router.render(); }
   };
 };
+// ===== 未总结的聊天记录：可编辑 / 删除 / 立即总结 =====
+Views.pending = async ({ convId }) => {
+  const info = Conv.parse(convId), pid = info.pid;
+  const st = await Memory.state(convId);
+  const list = (await getMsgs(convId)).filter(m => Memory.mt(m) > st.lastTs);
+  const members = Conv.members(convId);
+  screen().innerHTML = topbar('未总结 · ' + Conv.label(convId, pid)) + `<div class="body">
+    <div class="card flex" style="gap:6px;flex-wrap:wrap">
+      <button class="btn" data-act="sum" ${list.length ? '' : 'disabled'}>立即总结（${list.length} 条）</button>
+      ${members.map(c => `<button class="btn ghost" data-mem="${c.id}">${esc(c.name)}的记忆</button>`).join('')}
+    </div>
+    ${st.lastError ? `<p class="empty">上次总结失败：${esc(st.lastError)}</p>` : ''}
+    ${list.length ? list.map(m => `<div class="card" data-id="${m.id}">
+      <small>${ChatUI.timeLabel(m.ts)} · ${esc(senderName(m, pid))}${m.memDone ? ' · 线下（已单独写过记忆）' : ''}</small>
+      <p style="margin:6px 0;white-space:pre-wrap">${esc(preview(m, false, pid))}</p>
+      <div class="flex" style="justify-content:flex-end;gap:6px">
+        ${['text', 'voice', 'offline'].includes(m.type) ? '<button class="btn ghost sm" data-act="edit">编辑</button>' : ''}
+        <button class="btn danger sm" data-act="del">删除</button></div>
+    </div>`).join('') : '<p class="empty">都总结完了</p>'}
+  </div>`;
+  screen().onclick = async e => {
+    const mem = e.target.closest('[data-mem]')?.dataset.mem;
+    if (mem) return Router.go('mems', { charId: mem });
+    const a = e.target.closest('[data-act]')?.dataset.act;
+    if (a === 'sum') {
+      toast('总结中…', 3000);
+      const n = await Memory.maybeSummarize(convId, true);
+      toast(n ? `新增 ${n} 条记忆` : '没有新增记忆（失败的话看上面的报错）', 3000);
+      return Router.render();
+    }
+    const m = list.find(x => x.id === e.target.closest('[data-id]')?.dataset.id);
+    if (!m) return;
+    if (a === 'edit') {
+      const t = (await editText('编辑消息', m.content))?.trim();
+      if (t) { m.content = t; await DB.put('msgs', m); Router.render(); }
+    }
+    if (a === 'del' && await confirmBox('删除这条消息')) { await DB.del('msgs', m.id); Router.render(); }
+  };
+};
 
 // ===== 关系网 =====
 // 搜索词和筛选在页面重绘后保留
@@ -980,9 +1019,10 @@ Views.settings = async () => {
       <button class="btn ghost" data-act="t-tts">测试播放</button>
       <p class="empty">测试不受"启用"开关影响。</p>
     </div>
-    <h3>数据</h3><div class="card flex" style="gap:8px;flex-wrap:wrap">
+        <h3>数据</h3><div class="card flex" style="gap:8px;flex-wrap:wrap">
       <button class="btn" data-act="export">导出备份</button>
       <button class="btn ghost" data-act="import">导入备份</button>
+      <button class="btn danger" data-act="wipe">清除聊天和记忆</button>
       <input type="file" accept="application/json" id="imp" hidden>
     </div>
     <p class="empty">Key 只保存在这台设备的浏览器里，导出的备份文件也包含 Key，注意别发给别人。</p>
@@ -1027,10 +1067,41 @@ Views.settings = async () => {
       Memory._q = { text: null, vec: null };
       toast(`完成，共 ${all.length} 条`);
     }
+    if (a === 'wipe') {
+      if (!await confirmBox('清除所有聊天记录、记忆、宠物等（角色和人设保留，建议先导出备份）')) return;
+      if (!await confirmBox('再确认一次：删了找不回来')) return;
+      await wipeData();
+      toast('已清除，正在重新加载');
+      setTimeout(() => location.reload(), 800); // 重新加载，让内存里的宠物、日志等状态也清空
+    }
     if (a === 'export') exportData();
     if (a === 'import') $('#imp').click();
   };
 };
+// 一键清除：删聊天、记忆、朋友圈、宠物等，保留角色、人设、关系网、预设、世界书、书架、主题、表情包、设置
+async function wipeData() {
+  await DB.clear('msgs');
+  await DB.clear('mems');
+
+  // kv 里要删的：完全匹配的键 + 前缀匹配的键
+  const DEL_KEYS = ['lastRead', 'intents', 'lastActive', 'lastProactive', 'txns'];
+  const DEL_PREFIX = ['memstate_', 'moments_', ...PET_KV_PREFIX];
+  for (const x of await DB.all('kv')) {
+    if (DEL_KEYS.includes(x.id) || DEL_PREFIX.some(p => String(x.id).startsWith(p))) await DB.del('kv', x.id);
+  }
+
+  // 角色自己建的群删掉；你建的群保留（消息已经清空）
+  for (const g of S.groups) if (g.byChar) await DB.del('groups', g.id);
+
+  // 关系网保留，拉黑状态清掉
+  for (const k in S.rels) { delete S.rels[k].iBlock; delete S.rels[k].theyBlock; }
+  await DB.put('kv', { id: 'rels', value: S.rels });
+
+  delete S.settings.autoLang;
+  await saveSettings();
+}
+// 宠物在 kv 里的键名，见下面说明
+const PET_KV_PREFIX = ['pet'];
 
 async function exportData() {
   const data = { app: 'pixelphone', ver: 2, at: Date.now() };

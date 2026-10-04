@@ -16,7 +16,7 @@ Views.health = async () => {
     const n = await Memory.pendingCount(id);
     if (!n) continue;
     const st = await Memory.state(id);
-    pend.push({ label: Conv.label(id, pid), n, st });
+        pend.push({ id, label: Conv.label(id, pid), n, st });
   }
 
   let usage = '';
@@ -44,7 +44,7 @@ Views.health = async () => {
     </div>
 
     <h3>等待总结的消息</h3><div class="card">
-      ${pend.length ? pend.map(p => `<div class="row"><span>${esc(p.label)}</span><span>${p.n} 条</span></div>
+      ${pend.length ? pend.map(p => `<button class="row" data-act="open" data-conv="${esc(p.id)}"><span class="grow">${esc(p.label)}</span><span>${p.n} 条 ▸</span></button>
         ${p.st.fails ? `<p class="empty">⚠ 已连续失败 ${p.st.fails} 次：${esc(p.st.lastError)}</p>` : ''}`).join('')
         + '<button class="btn" data-act="sum" style="margin-top:8px">立即全部总结</button>'
         : '<p class="empty">没有积压</p>'}
@@ -69,6 +69,7 @@ Views.health = async () => {
   screen().onclick = async e => {
     const a = e.target.closest('[data-act]')?.dataset.act;
     if (!a || running) return;
+    if (a === 'open') return Router.go('pending', { convId: e.target.closest('[data-conv]').dataset.conv });
     if (a === 'clear') { await Log.clear(); return Router.render(); }
     if (a === 'ping') {
       toast('测试中…');

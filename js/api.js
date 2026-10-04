@@ -54,10 +54,12 @@ const API = {
           body: JSON.stringify(body),
           signal: ac.signal,
         });
-      } catch (e) {
+           } catch (e) {
         clearTimeout(timer);
         if (e.name === 'AbortError') throw new Error('请求超时（网页可能被切到后台，浏览器暂停了请求）');
-        throw e;
+        // Load failed / Failed to fetch：连接被断开，多半是偶发，等一下重试，最多 2 次
+        if (tryN < 2) { await sleep(2000 * (tryN + 1)); continue; }
+        throw new Error('网络请求失败（' + e.message + '），可能是中转站断开或网页切到了后台');
       }
       clearTimeout(timer);
       const data = await r.json().catch(() => ({}));

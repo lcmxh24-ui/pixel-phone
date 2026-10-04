@@ -134,7 +134,14 @@ const Media = {
 Describe what is visible: subject, setting, lighting, colors, mood. No text or watermarks.${known ? ' Do not add style words (style is added separately).' : ' A style is given in brackets: end the line with a few English keywords for that style.'}${purpose === 'avatar' ? ' It is a profile picture.' : ''} If the description contains 重点要求, follow it strictly and put the main subject first, stated clearly (e.g. "a capybara"). Output only the prompt.`;
         const art = ch?.artStyle && !PHOTO_STYLES.includes(style) ? `\n（作者的画风偏好：${ch.artStyle}）` : '';
         const st = known ? '' : `\n（风格：${style}）`;
-        main = (await API.claude(sys, [{ role: 'user', content: desc + st + art }], { maxTokens: 200, temperature: 0.5 })).split('\n')[0].trim() || desc;
+                // 失败重试一次；取第一个有内容的行，去掉 "Prompt:" 之类的前缀
+        let out = '';
+        for (let i = 0; i < 2 && !out; i++) {
+          try { out = await API.claude(sys, [{ role: 'user', content: desc + st + art }], { maxTokens: 300, temperature: 0.5 }); }
+          catch (e) { if (i === 1) throw e; await sleep(1500); }
+        }
+        const line = out.split('\n').map(s => s.trim()).find(s => s && !/^(here|prompt)\b.*:$/i.test(s)) || '';
+        main = line.replace(/^(prompt|english prompt)\s*[:：]\s*/i, '').replace(/^["“]|["”]$/g, '') || desc;
       } catch (e) {
         Log.add('生图提示词改写失败，改用原描述', e.message);
       }
@@ -414,6 +421,14 @@ Describe what is visible: subject, setting, lighting, colors, mood. No text or w
       toast('识别中…');
       try { m.desc = await this.describe(m.url); m.content = m.desc; await DB.put('msgs', m); ChatUI.refresh(); }
       catch (e) { toast('识别失败：' + e.message, 3000); }
+    }
+    if (a === 'm_regen') {
+      const r = await this.regen(m.desc || m.content, charById(m.sender));
+      if (!r) return true;
+      Object.assign(m, { url: r.url, desc: r.desc, content: r.desc, style: r.style });
+      await DB.put('msgs', m);
+      ChatUI.refresh();
+      toast('已换成新图');
     }
     return true;
   },
