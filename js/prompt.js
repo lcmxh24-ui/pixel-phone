@@ -492,7 +492,7 @@ ${GroupAdmin.rules(g, members)}`;
       st.push(`【${c.name}的设定】\n${c.persona || '（无）'}`);
       const r = getRel(pid, c.id);
       if (r.know) st.push(`${c.name}认识${p.name}${r.desc ? '：' + r.desc : ''}`);
-      const mem = await Memory.retrieveText(c.id, pid, query, c.name);
+      const mem = await Memory.retrieveText(c.id, pid, query, c.name, { conv: convId, since: hist[0]?.ts });
       if (mem) dy.push(mem);
     }
     st.push(`（上面两人的设定是写手的参考资料。${x.name}和${y.name}不知道对方设定的原文，只知道相处中了解到的。）`);

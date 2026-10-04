@@ -209,7 +209,7 @@ const inWindow = m => skip?.since && m.at && m.at >= skip.since
       for (const c of chars) {
         const arr = Array.isArray(obj) ? (chars.length === 1 ? obj : []) : (obj[c.name] || []);
         for (const it of arr) {
-         if (it?.text) await Memory.add(c.id, pid, it.text, it.level === 'important' ? 'important' : 'normal', 'offline:' + scene, ts);
+          if (it?.text) await Memory.add(c.id, info.pid, it.text, it.level === 'important' ? 'important' : 'normal', convId, useful[0].ts);
           total++;
         }
       }

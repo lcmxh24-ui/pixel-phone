@@ -1119,7 +1119,7 @@ const Offline = {
     const obj = Memory.parseJSON(out);
     for (const c of chars) {
       for (const it of (obj[c.name] || [])) {
-        if (it?.text) await Memory.add(c.id, pid, it.text, it.level === 'important' ? 'important' : 'normal', 'offline:' + scene);
+                if (it?.text) await Memory.add(c.id, pid, it.text, it.level === 'important' ? 'important' : 'normal', 'offline:' + scene, ts);
       }
     }
   },
