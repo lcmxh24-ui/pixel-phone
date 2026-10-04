@@ -487,10 +487,19 @@ async function msgActions(m) {
     await ChatUI.refresh();
     return ChatUI.syncSel();
   }
-  if (a === 'edit') {
-    const t = await editText('编辑消息', m.content);
-    if (t?.trim()) { m.content = t.trim(); await DB.put('msgs', m); ChatUI.refresh(); }
+   if (a === 'edit') {
+    // 图片的编辑框优先显示 desc，跟大图和 AI 看到的保持一致
+    const cur = m.type === 'image' ? (m.desc || m.content) : m.content;
+    const t = await editText(m.type === 'image' ? '编辑图片描述' : '编辑消息', cur);
+    if (t?.trim()) {
+      m.content = t.trim();
+      // 图片：desc 是 AI 读的和大图下显示的，必须同步
+      if (m.type === 'image') m.desc = m.content;
+      await DB.put('msgs', m);
+      ChatUI.refresh();
+    }
   }
+
    if (a === 'raw') {
     delete m.asLang; delete m.asNative; m.keepRaw = true;
     await DB.put('msgs', m); ChatUI.refresh();
