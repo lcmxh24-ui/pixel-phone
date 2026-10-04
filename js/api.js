@@ -25,10 +25,15 @@ const API = {
     async claude(system, messages, opt = {}) {
     const c = S.settings.claude;
     if (!c.key) throw new Error('还没填 Claude API Key');
+    // 调用时传 { cache: true }，而且 system 是字符串，才自动加缓存标记
+    // 已经是数组（自己带了标记）的保持原样；一次性的请求不加，免得白付写入费
+    const sys = opt.cache && typeof system === 'string' && system
+      ? [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }]
+      : system;
     const body = {
       model: c.model,
       max_tokens: Number(opt.maxTokens || c.maxTokens || 1024),
-      system,
+      system: sys,
       messages,
     };
     // 温度留空，或这个模型已知不支持时，就不发送 temperature

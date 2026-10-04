@@ -2649,9 +2649,9 @@ const PetGames = {
          // 所有还在场的角色都带上，这次主要说话的排在前面
         const allC = players.slice(1).filter(x => !x.out || x.id === sid).map(x => charById(x.id)).filter(Boolean);
         const recent = logs.slice(0, 6).map(l => l.text).join(' ');
-        const score = c => (c.id === sid ? 100 : 0) + (userText && userText.includes(c.name) ? 50 : 0)
-          + (recent.includes(c.name) ? 10 : 0) + Math.random();
-        const cs = allC.sort((a, b) => score(b) - score(a));
+        // 顺序固定（按入场顺序），系统提示词每次都一样，才能命中缓存
+        // 这次谁主要说话，已经写在下面的 task 里了，不用靠排序
+        const cs = allC;
         const names = cs.map(c => c.name);
         const wb = WB.build(cs.map(c => c.id), '').constant;
         const system = [
@@ -2667,7 +2667,7 @@ const PetGames = {
           chat.length && `【聊天框】\n${chat.slice(-8).map(x => x.name + '：' + x.text).join('\n')}`,
           userText ? `${me.name}刚刚在聊天框说：${userText}。要有人回应。` : `${desc}。${sp ? `这次主要是${sp.name}开口，` : ''}说一两句就行。`,
         ].filter(Boolean).join('\n\n');
-       const out = await API.claude(system, [{ role: 'user', content: task }], { maxTokens: 600 });
+       const out = await API.claude(system, [{ role: 'user', content: task }], { maxTokens: 600, cache: true });
         // 名字对不上的那一条跳过，其他照常显示
         const lines = Prompt.parseLines(out, names).msgs.filter(m => m.content && m.type !== 'sys')
           .map(m => ({ c: cs.find(c => c.name === m.name), content: m.content }))
