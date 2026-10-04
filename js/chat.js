@@ -1,4 +1,10 @@
 // ===== 生成：单聊 / 群聊 / 角色间私聊 =====
+// 查一个会话属于哪个人设。群聊的人设存在群信息里，私聊的直接存在会话里
+function convPid(convId) {
+  const i = Conv.parse(convId);
+  return i.type === 'g' ? i.group?.personaId : i.pid;
+}
+
 const Gen = {
   busy: new Set(),
 

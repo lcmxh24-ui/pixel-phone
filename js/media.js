@@ -247,7 +247,6 @@ Describe what is visible: subject, setting, lighting, colors, mood. No text or w
   // 发出前处理：表情名→图片，照片→生图，换头像→执行并返回系统提示
   async prepare(it, convId) {
     if (['transfer', 'accept', 'refund', 'redpacket', 'grab'].includes(it.type)) return Wallet.prepare(it, convId);
-    if (['transfer', 'accept', 'refund'].includes(it.type)) return Wallet.prepare(it, convId);
     if (it.type === 'sticker') {
       const s = this.findSticker(it.content);
       if (!s) return null; // 编了一个不存在的表情，直接丢掉
@@ -257,7 +256,7 @@ Describe what is visible: subject, setting, lighting, colors, mood. No text or w
       const { style, desc } = this.parseStyle(it.content);
       // 宠物截图：直接用宠物的点阵画，不走生图
       if (style === '宠物截图') {
-        const pet = Pet.findForShot(it.sender, desc, Conv.parse(convId).pid);
+        const pet = Pet.findForShot(it.sender, desc, convPid(convId));
         if (pet) {
           const label = `（宠物截图）${Pet.petLabel(pet)}${desc && desc !== pet.name ? '，' + desc : ''}`;
           return { sender: it.sender, type: 'image', content: label, extra: { url: Pet.snapshot(pet), desc: label, gen: true, style } };
@@ -283,7 +282,7 @@ Describe what is visible: subject, setting, lighting, colors, mood. No text or w
    // 聊天里决定发朋友圈：后台去发，发完在聊天里留一条系统提示。同一角色 5 分钟内最多一次
   _momentAt: {},
   chatMoment(it, convId) {
-    const ch = charById(it.sender), pid = Conv.parse(convId).pid;
+    const ch = charById(it.sender), pid = convPid(convId);
     if (!ch || !pid) return null;
     const wait = 5 * 60e3 - (Date.now() - (this._momentAt[ch.id] || 0));
     if (wait > 0) {

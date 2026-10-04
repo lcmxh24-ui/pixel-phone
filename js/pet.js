@@ -53,6 +53,39 @@ const SPECIES = {
     colors: [{ n: '帝企鹅', B: '#2a2e3a', D: '#1a1e28', W: '#ffffff' }, { n: '小蓝', B: '#5a80b0', D: '#3a5a88', W: '#f4f8ff' }] },
   fox: { name: '狐狸', map: ['B.......B.', 'BB.....BB.', 'BBBBBBBBB.', 'BWEBBBEWB.', '.WWWNWWW..', '..WWWWW..D', '.BBBBBBBDD', '.BBBBBBBDW', '.BB.BB.B..', '.DD.DD.D..'],
     colors: [{ n: '赤狐', B: '#e07830', D: '#3a2418', W: '#ffffff' }, { n: '北极狐', B: '#f4f4f8', D: '#c0c4cc', W: '#ffffff', E: '#3a3a48' }, { n: '银狐', B: '#5a5a64', D: '#2a2a30', W: '#e8e8ee' }] },
+  // 水豚：侧身，头朝左，头顶顶着一个小橘子（K 是公共色板里的橘色）
+  capybara: { name: '水豚', map: [
+      '.KK.......',
+      'DBBD......',
+      'BBBBBBBBB.',
+      'BEBBBBBBBB',
+      'BBBBBBBBBB',
+      'NBBWWWWBBB',
+      '.BBWWWWBB.',
+      '.BB....BB.',
+      '.DD....DD.'],
+    colors: [
+      { n: '原味', B: '#a87850', D: '#6a4a2a', W: '#c89a70' },
+      { n: '奶茶', B: '#d0a878', D: '#9a7448', W: '#ecd0a8' },
+      { n: '巧克力', B: '#6e4a30', D: '#3e2818', W: '#8e6a4a' },
+    ] },
+  // 北极熊：正面，圆耳朵，白肚皮
+  polarbear: { name: '北极熊', map: [
+      'BB....BB..',
+      'BBBBBBBB..',
+      'BEBBBBEB..',
+      'BBBNNBBB..',
+      '.BBBBBB...',
+      'BBBBBBBBD.',
+      'BWWWWWWBD.',
+      'BWWWWWWB..',
+      'BB.BB.BB..',
+      '.DD..DD...'],
+    colors: [
+      { n: '雪白', B: '#f4f4f0', D: '#c8c8c0', W: '#ffffff' },
+      { n: '奶油', B: '#f4ead2', D: '#cdbf9c', W: '#fffaf0' },
+      { n: '冰川蓝', B: '#e4eef8', D: '#a8bccf', W: '#ffffff' },
+    ] },
 };
 
 // 成长阶段：k 是体型比例，exp 是需要的成长值
@@ -94,6 +127,8 @@ const TRAITS = {
   hamster: { speed: 1.1, gait: 'walk', acts: ['groom', 'dig', 'roll', 'loaf'], sleep: 'curl', home: 'house', say: ['吱'], dream: '🌻' },
   penguin: { speed: 0.6, gait: 'waddle', acts: ['slide', 'slide', 'flap'], sleep: 'stand', say: ['嘎'], dream: '🐟' },
   fox:     { speed: 1.2, gait: 'walk', acts: ['pounce', 'pounce', 'groom', 'roll'], sleep: 'curl', home: 'tree', say: ['嘤'], dream: '🐭' },
+  capybara:  { speed: 0.5, gait: 'walk', acts: ['loaf', 'loaf', 'graze', 'groom'], sleep: 'side', home: 'house', say: ['咕'], dream: '🍊' },
+  polarbear: { speed: 0.9, gait: 'walk', acts: ['roll', 'slide', 'stretch', 'dig'], sleep: 'curl', home: 'house', say: ['呜~'], dream: '🐟' },
 };
 // 动作持续时间（毫秒，最短-最长）
 const ACT_MS = { roll: [2000, 3000], stretch: [1600, 1600], loaf: [4000, 7000], groom: [2500, 4000], wag: [1500, 2500], dig: [2000, 3000],
@@ -421,7 +456,7 @@ ${recent ? '。最近：' + recent : ''}` };
   给自己参与养的宠物改名（比如商量好了新名字）：单独一行 ${p}[宠物改名]旧名字|新名字
   照顾宠物：对方让你帮忙照看，或者你自己想帮忙时，单独一行 ${p}[照顾宠物]宠物名字|喂食/铲屎/洗澡/摸摸/看医生。可以照顾自己养的，也可以帮认识的人照顾。一次一个动作，能做到就答应，不用推脱说做不到。
   宠物串门：想带自己养的宠物去对方家玩，单独一行 ${p}[宠物串门]自己宠物的名字|去；想邀请对方的宠物来自己家玩，单独一行 ${p}[宠物串门]对方宠物的名字|来。可以加小时数：名字|来|3。偶尔用。
-  每人自己最多养 3 只。能养的动物和花色：${sps}`;
+  每人自己最多养 3 只。${p ? '群里几个人都想养的话，每人各自单独写一行。' : ''}能养的动物和花色：${sps}`;
   },
 
   findSp(n) {
@@ -498,7 +533,7 @@ ${recent ? '。最近：' + recent : ''}` };
   // 角色自己领养。在角色间私聊里说的，算两个人一起养
   async charAdopt(charId, spec, convId) {
   const v = this.parseSpec(spec);
-  const i = Conv.parse(convId), pid = i.pid;
+  const i = Conv.parse(convId), pid = convPid(convId);
   if (!v || !pid || !charById(charId)) return null;
   if (this.list.filter(p => p.owners.includes(charId) && this.petPid(p) === pid).length >= 3) return null;
   const owners = [charId];
@@ -567,7 +602,7 @@ ${recent ? '。最近：' + recent : ''}` };
  async charRename(charId, spec, convId) {
   const [a, b] = String(spec).split(/[|｜]/).map(x => x.trim());
   const n = (b || '').replace(/^["“「『]|["”」』]$/g, '').slice(0, 12);
-  const pid = Conv.parse(convId).pid;
+  const pid = convPid(convId);
   const mine = this.list.filter(x => x.owners.includes(charId) && this.petPid(x) === pid);
     const p = mine.find(x => x.name === a) || (mine.length === 1 ? mine[0] : null);
     if (!p || !n || n === p.name) return null;
@@ -583,7 +618,7 @@ ${recent ? '。最近：' + recent : ''}` };
     const KIND = { 喂: 'feed', 吃: 'feed', 铲: 'clean', 屎: 'clean', 洗: 'bath', 澡: 'bath', 摸: 'pet', 医: 'doctor', 病: 'doctor' };
     const k = Object.keys(KIND).find(x => (b || a || '').includes(x));
     if (!k) return null;
-    const pid = Conv.parse(convId).pid;
+    const pid = convPid(convId);
     const can = this.list.filter(p => this.petPid(p) === pid && (p.owners.includes(charId)
   || (pid && p.owners.includes('p:' + pid) && knows(pid, charId))));
     const p = can.find(x => a && a.includes(x.name)) || (can.length === 1 ? can[0] : can.find(x => x.owners.includes('p:' + pid)));
@@ -1038,7 +1073,7 @@ ${recent ? '。最近：' + recent : ''}` };
   // 角色在聊天里发起串门：「名字|来」请别人的宠物来自己家，「名字|去」带自己的宠物去对方家
   async charVisit(charId, spec, convId) {
     const [a, b = '', c] = String(spec).split(/[|｜]/).map(x => x.trim());
-    const i = Conv.parse(convId), pid = i.pid;
+    const i = Conv.parse(convId), pid = convPid(convId);
     if (!pid) return null;
     const hours = Math.max(0.5, Math.min(12, Number(c) || 2));
     const free = x => this.loc(x) === this.homeOf(x) && !x.sick;
@@ -1057,64 +1092,6 @@ ${recent ? '。最近：' + recent : ''}` };
     this.startVisit(p, host, hours, charId, come ? '邀请它来家里玩' : `带它去${this.who(host)}家玩`);
     await this.save();
     return { sender: charId, type: 'sys', content: `${this.who(charId)}${come ? `邀请「${p.name}」来家里玩` : `带「${p.name}」去${this.who(host)}家玩`}（${hours}小时）` };
-
-    const loop = now => {
-      this._fabRaf = requestAnimationFrame(loop);
-      if (document.hidden || now - last < 100) return;
-      last = now;
-      frame++;
-
-      const p = this.fabPet();
-      if (!p.demo) this.decay(p);
-      mode = pickMode(p, now);
-
-      const map = this.mapOf(p), w = map[0].length * S3, h = map.length * S3;
-      const blink = mode === 'sleep' || now % 3200 < 160;
-      off.width = w; off.height = h;
-      octx.clearRect(0, 0, w, h);
-      this.drawSprite(octx, p, 0, 0, S3, { blink, flip: dir < 0 });
-
-      ctx.clearRect(0, 0, W, W);
-      ctx.imageSmoothingEnabled = false;
-      const maxX = W - w;
-      if (x > maxX) x = maxX;
-
-      if (mode === 'walk') {
-        x += dir * 1.5;
-        if (x <= 0 || x >= maxX) { dir *= -1; x = Math.max(0, Math.min(maxX, x)); }
-        ctx.drawImage(off, Math.round(x), GROUND - h - (frame % 2), w, h);
-      } else if (mode === 'hop') {
-        const ph = (now % 700) / 700;
-        const jump = ph < 0.15 ? 0 : Math.sin((ph - 0.15) / 0.85 * Math.PI) * 9;
-        const squash = ph < 0.15 ? 0.85 : 1; // 起跳前压扁一下
-        const hh = Math.round(h * squash);
-        ctx.drawImage(off, Math.round(x), Math.round(GROUND - hh - jump), w, hh);
-      } else if (mode === 'idle') {
-        ctx.drawImage(off, Math.round(x), GROUND - h, w, h);
-      } else {
-        // lie / sleep / sick：压扁、稍微变宽，看起来像趴着
-        const hh = Math.round(h * 0.72), ww = Math.min(W, Math.round(w * 1.1));
-        const jitter = mode === 'sick' ? (frame % 2 ? 1 : -1) : 0;
-        const lx = Math.max(0, Math.min(W - ww, Math.round(x) + jitter));
-        ctx.drawImage(off, lx, GROUND - hh, ww, hh);
-
-        if (mode === 'sleep' && frame % 12 === 0) zs.push({ x: lx + ww - 4, y: GROUND - hh, life: 1 });
-        if (mode === 'sick' && frame % 16 === 0) zs.push({ x: lx + 2, y: GROUND - hh, life: 1, ch: '💧' });
-      }
-
-      ctx.textAlign = 'center';
-      zs = zs.filter(z => z.life > 0);
-      for (const z of zs) {
-        ctx.globalAlpha = z.life;
-        ctx.font = z.ch ? '9px sans-serif' : 'bold 10px monospace';
-        ctx.fillStyle = '#1e2a10';
-        ctx.fillText(z.ch || 'z', z.x, z.y);
-        z.y -= 1.2; z.x += z.ch ? 0 : 0.4; z.life -= 0.08;
-      }
-      ctx.globalAlpha = 1;
-    };
-    cancelAnimationFrame(this._fabRaf);
-    this._fabRaf = requestAnimationFrame(loop);
   },
  
   // ===== 面板 =====
