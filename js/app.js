@@ -365,6 +365,21 @@ function chatIds(pid) {
   for (const g of S.groups) if (g.personaId === pid && (g.userIn !== false || !g.byChar)) ids.push(Conv.g(g.id));
   return ids;
 }
+// 悄悄删群：只在本地删除，不发系统消息，角色不会知道
+async function deleteGroupSilently(gid) {
+  const g = S.groups.find(x => x.id === gid);
+  if (!g) return;
+  const convId = Conv.g(gid);
+  // 删掉这个群的所有聊天记录
+  for (const m of await getMsgs(convId)) await DB.del('msgs', m.id);
+  // 删掉总结进度和未读记录
+  await DB.del('kv', 'memstate_' + convId);
+  delete S.lastRead[convId];
+  await DB.put('kv', { id: 'lastRead', value: S.lastRead });
+  // 删掉群本身
+  await DB.del('groups', gid);
+  S.groups = S.groups.filter(x => x.id !== gid);
+}
 
 // ===== 聊天列表 =====
 Views.chats = async () => {
@@ -382,15 +397,30 @@ Views.chats = async () => {
     });
   }
   rows.sort((a, b) => b.ts - a.ts);
-  screen().innerHTML = topbar('聊天', '<button class="btn ghost" data-act="newgroup" aria-label="新建群聊">＋群</button>') +
+    screen().innerHTML = topbar('聊天', `<span class="flex" style="gap:4px;flex-wrap:nowrap">
+    <button class="btn ghost" data-act="delgroup" aria-label="删除群聊">删群</button>
+    <button class="btn ghost" data-act="newgroup" aria-label="新建群聊">＋群</button></span>`) +
     `<div class="body list">${rows.length ? rows.map(r => `<button class="item" data-id="${esc(r.id)}">
       ${r.av}<div class="grow"><div class="flex" style="justify-content:space-between"><b>${esc(r.name)}</b>
       <small>${r.ts ? new Date(r.ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : ''}</small></div>
       <small class="ellipsis">${r.u.at ? '<span class="at">[有人@我]</span> ' : ''}${esc(r.pv)}</small></div>
       ${r.u.n ? `<span class="dot">${r.u.n}</span>` : ''}</button>`).join('')
       : '<p class="empty">还没有聊天。先去「角色」里创建角色吧。</p>'}</div>`;
-  screen().onclick = e => {
+   screen().onclick = async e => {
     if (e.target.closest('[data-act="newgroup"]')) return Router.go('newGroup');
+    if (e.target.closest('[data-act="delgroup"]')) {
+      // 列出当前人设能看到的群
+      const gs = S.groups.filter(g => g.personaId === pid && chatIds(pid).includes(Conv.g(g.id)));
+      if (!gs.length) return toast('没有可以删除的群');
+      const gid = await actionSheet(gs.map(g => ({ label: g.name + (g.userIn === false ? '（已退出）' : ''), value: g.id, danger: true })));
+      if (!gid) return;
+      const g = S.groups.find(x => x.id === gid);
+      if (!await confirmBox(`彻底删除「${g.name}」（聊天记录一起删，角色不会知道，删了找不回来）`)) return;
+      await deleteGroupSilently(gid);
+      toast('已删除');
+      return Router.render();
+    }
+
     const it = e.target.closest('[data-id]');
     if (!it) return;
     const id = it.dataset.id;
