@@ -76,25 +76,27 @@ const Memory = {
     await DB.put('mems', m);
   },
 
-  async retrieve(charId, personaId, query) {
+    async retrieve(charId, personaId, query) {
     const cfg = S.settings.memory;
     const mems = (await DB.byIndex('mems', 'charId', charId)).filter(m => m.personaId === personaId);
-    const important = mems.filter(m => m.level === 'important')
-      .sort((a, b) => b.ts - a.ts).slice(0, Number(cfg.importantCap)).reverse();
-    const normal = mems.filter(m => m.level !== 'important');
-    if (!normal.length || !query) return { important, normal: [] };
+    const imp = mems.filter(m => m.level === 'important')
+      .sort((a, b) => b.ts - a.ts).slice(0, Number(cfg.importantCap));
+    // 只有最近几条重要记忆常驻，更早的重要记忆和普通记忆一起按相关度召回
+    const pinN = Number(cfg.importantPin ?? 3);
+    const important = imp.slice(0, pinN).reverse();
+    const pool = [...imp.slice(pinN), ...mems.filter(m => m.level !== 'important')];
+    if (!pool.length || !query) return { important, normal: [] };
 
-    const qApi = normal.some(m => m.vecType === 'api') ? await this.queryApiVec(query) : null;
+    const qApi = pool.some(m => m.vecType === 'api') ? await this.queryApiVec(query) : null;
     const qLocal = this.localVec(query);
     let mismatch = 0;
     const score = m => {
       if (m.vecType === 'local') return this.cos(qLocal, m.vec);
       if (qApi && m.vec?.length === qApi.length) return this.cos(qApi, m.vec);
-      // 查询失败或维度不符：临时用本地方式打分，保证还能召回
       if (qApi) mismatch++;
       return this.cos(qLocal, this.localVec(m.text));
     };
-    const picked = normal
+    const picked = pool
       .map(m => ({ m, s: score(m) }))
       .filter(x => x.s >= Number(cfg.threshold))
       .sort((a, b) => b.s - a.s)
@@ -105,12 +107,14 @@ const Memory = {
     return { important, normal: picked };
   },
 
-  async retrieveText(charId, personaId, query, title = '') {
+   async retrieveText(charId, personaId, query, title = '') {
     const { important, normal } = await this.retrieve(charId, personaId, query);
-        const fmt = m => `- [${new Date(m.at || m.ts).toLocaleDateString('zh-CN')}] ${m.text}`;
+    if (!important.length && !normal.length) return '';
+    const fmt = m => `- [${new Date(m.at || m.ts).toLocaleDateString('zh-CN')}] ${m.text}`;
     const out = [];
-    if (important.length) out.push(`【${title}的重要记忆】\n` + important.map(fmt).join('\n'));
-    if (normal.length) out.push(`【${title}的相关回忆】\n` + normal.map(fmt).join('\n'));
+    if (important.length) out.push(`【${title}记得的事】\n` + important.map(fmt).join('\n'));
+    if (normal.length) out.push(`【${title}可能会联想到的旧事】\n` + normal.map(fmt).join('\n'));
+    out.push(`（这些是${title}脑子里的背景，用来保持前后一致，不是要说的话题。真人聊天很少主动翻旧账：只有当前话题直接碰到、或者确实好笑/有意义时才自然带一句，一段对话里最多一次，大多数时候一句都不提。不要为了显得"记得"而提。）`);
     return out.join('\n\n');
   },
 
@@ -178,12 +182,13 @@ const Memory = {
       const system = `你是记忆整理助手。阅读一段手机聊天记录（${kind}），分别从 ${names.join('、')} 各自的视角，提炼值得长期记住的信息。
 要求：
 1. 每条记忆是一句完整、独立的陈述，写清楚是谁、做了什么或说了什么，不用指代不明的代词。
-2. 分级：
-   - important：关系变化、约定承诺、重要事件、对方的重要个人信息（喜好、经历、身份）、强烈情绪。
-   - normal：日常话题、一般细节、闲聊。
-3. 相似内容合并，寒暄忽略。每人 0 到 6 条。
+2. 分级（important 要少，一段聊天通常 0 到 1 条）：
+   - important：关系的明显变化、还没兑现的约定、改变了两人相处方式的事件、对方第一次透露的重要身份或经历。
+   - normal：喜好、日常细节、闲聊里的梗、一般情绪。
+3. 相似内容合并，寒暄和已经说过的旧事忽略。每人 0 到 4 条，宁少勿多。
 4. 涉及时间的一律写成具体日期，比如"3月6日约好一起去吃火锅"，不要写"今天""明天""昨天""下周"。
-5. 只输出 JSON，不要其他文字。
+5. 不要记录人设里本来就有的东西：某人表现出了自己的性格、提到自己的喜好或能力，这些不算新信息，不用记。只记这段聊天里真正发生的新事情。
+6. 只输出 JSON，不要其他文字。
 键名必须是这些名字：${names.join('、')}。格式：{"名字":[{"text":"...","level":"normal"}]}`;
       const out = await API.claude(system,
         [{ role: 'user', content: `日期：${new Date(msgs.at(-1).ts).toLocaleDateString('zh-CN')}\n\n${log}` }],

@@ -113,6 +113,13 @@ const Prompt = {
 
   // 告诉 AI 怎么换算"今天""明天"
   TIME_RULE: '（聊天记录里的"今天""明天""昨天"，是按发那条消息的那天说的，要换算成现在的日期。比如昨天说"明天去"，指的就是今天。约好的时间已经过了，就当已经发生了。）',
+  // 人设只当背景用：不复述、不介绍别人、标签和能力不挂嘴边
+  PERSONA_RULE: `【人设怎么用】（重要）
+- 设定里的特点（性格标签、特殊能力、喜好、口头禅、身世）是背景，不是话题。真人不会把自己的特点挂在嘴边。
+- 性格要靠做出来，不要说出来。比如设定写"一本正经地骗人"，就让他直接这样逗人，任何人（包括他自己和别人）都不要说"他很会一本正经地骗人"。
+- 喜好只在话题碰到时才可能出现，而且不是每次都提。最近已经提过的喜好，很长时间内不要再提。
+- 特殊能力、特殊体质这类设定平时藏在行为里，只有剧情真的碰到时才提，提过一次后很久都不要再强调。
+- 其他人的设定是写手才看得到的参考资料，角色本人并不知道。一个人只能凭自己和对方相处的经历评价对方，而且很少主动向别人介绍某人的性格。`,
 
   // 含这些变量的条目每次都会变，放到缓存之后
     DYN_KEYS: ['记忆', 'memory', '近况', '时间', '天气', '世界书触发', '所在地'],
@@ -347,7 +354,8 @@ const Prompt = {
     const p = persona(pid);
     const all = await getMsgs(convId);
     const hist = this.window(all);
-    const query = hist.slice(-6).map(m => m.content).join('\n') || hint;
+        // 只用对方最近说的话召回，不用角色自己的回复，避免提过的旧事反复被召回
+    const query = hist.filter(m => m.sender === 'user').slice(-3).map(m => m.content).join('\n') || hint;
     const rel = getRel(pid, ch.id);
     const known = this.knownList(ch.id, pid);
     const wb = WB.build([ch.id], WB.scan(all) + '\n' + hint);
@@ -355,7 +363,7 @@ const Prompt = {
       ...this.baseVars(pid, now),
       角色: ch.name, char: ch.name, 角色设定: ch.persona || '', char_persona: ch.persona || '',
       记忆: await Memory.retrieveText(ch.id, pid, query, ch.name),
-      近况: (await this.recentLines(ch.id, pid, convId)).sort((a, b) => a.ts - b.ts).slice(-12).map(x => x.t).join('\n'),
+            近况: (await this.recentLines(ch.id, pid, convId)).sort((a, b) => a.ts - b.ts).slice(-6).map(x => x.t).join('\n'),
       关系: [rel.desc ? `${ch.name}和${p.name}：${rel.desc}` : '', known ? `${ch.name}认识的人：${known}` : '',
         rel.theyBlock ? `${ch.name}已经把${p.name}拉黑了` : '',
         rel.iBlock ? `${p.name}把${ch.name}拉黑了，${ch.name}知道` : ''].filter(Boolean).join('\n'),
@@ -370,6 +378,7 @@ const Prompt = {
         // 这个角色当群主或管理员、而你不在的群
     const invGroups = S.groups.filter(g => g.personaId === pid && g.userIn === false && g.members.includes(ch.id) && GroupAdmin.role(g, ch.id) !== 'member').map(g => g.name);
         st.push(this.fill(this.dmRules(known, invGroups, rel.theyBlock, rel.iBlock), vars));
+    st.push(this.fill(this.PERSONA_RULE, vars));
     const lr = Lang.dmRule(ch, p);
     if (lr) st.push(this.fill(lr, vars));
         const { system, dyn } = this.cacheSys(st, dy);
@@ -401,14 +410,15 @@ const Prompt = {
     const names = members.map(c => c.name);
     const all = await getMsgs(convId);
     const hist = this.window(all);
-    const query = hist.slice(-6).map(m => m.content).join('\n') || hint;
+       const query = hist.slice(-6).filter(m => m.sender === 'user' || m.type === 'text').slice(-4).map(m => m.content).join('\n') || hint;
     const mem = [];
     for (const c of members) { const t = await Memory.retrieveText(c.id, pid, query, c.name); if (t) mem.push(t); }
     const wb = WB.build(g.members, WB.scan(all));
     const vars = {
       ...this.baseVars(pid, now),
       群名: g.name, 成员名单: names.join('、'), 角色: names.join('、'),
-      成员设定: members.map(c => `· ${c.name}：${c.persona || '（无）'}`).join('\n\n'),
+            成员设定: '（以下是写手的参考资料。成员之间不知道彼此设定的原文，只知道自己相处中看到的。）\n'
+        + members.map(c => `· ${c.name}：${c.persona || '（无）'}`).join('\n\n'),
       记忆: mem.join('\n\n'), 关系: this.relationsText(members, pid),
       近况: await this.recentMulti(members, pid, convId),
       世界书: wb.constant, 世界书触发: wb.triggered,
@@ -431,6 +441,7 @@ ${Quote.RULE}
 ${GroupAdmin.rules(g, members)}`;
     const { st, dy } = this.split('group', vars);
     st.push(this.fill(rules, vars));
+    st.push(this.fill(this.PERSONA_RULE, vars));
     if (g.userIn === false) st.push(this.fill(`【注意】{{用户}}现在不在这个群里（${g.byChar ? '从来没进过' : '已经退出了'}），看不到群消息。上面说的群成员不包括{{用户}}。大家说话不用顾忌{{用户}}，也可以聊到{{用户}}。`, vars));
         const { system, dyn } = this.cacheSys(st, dy);
 
@@ -477,6 +488,7 @@ ${GroupAdmin.rules(g, members)}`;
       const mem = await Memory.retrieveText(c.id, pid, query, c.name);
       if (mem) dy.push(mem);
     }
+    st.push(`（上面两人的设定是写手的参考资料。${x.name}和${y.name}不知道对方设定的原文，只知道相处中了解到的。）`);
     if (knows(pid, x.id) || knows(pid, y.id)) st.push(`【${p.name}的设定】\n${p.persona || '（无）'}`);
     const wb = WB.build([x.id, y.id], WB.scan(hist) + '\n' + reason);
     if (wb.constant) st.push(`【世界设定】\n${wb.constant}`);
@@ -490,6 +502,7 @@ ${GroupAdmin.rules(g, members)}`;
     }
     st.push(`【两人的关系】\n${getRel(x.id, y.id, pid).desc || '认识'}`);
     st.push(...this.styleBlocks(pid, `${x.name}、${y.name}`));
+    st.push(this.PERSONA_RULE);
     const blockers = [x, y].filter(c => getRel(pid, c.id).theyBlock).map(c => c.name);
     st.push(`【要求】
 - 只写两人发出的消息，每行一条，格式：名字：内容。名字只能是${x.name}或${y.name}。

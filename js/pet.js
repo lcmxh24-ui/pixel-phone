@@ -47,6 +47,12 @@ const SPECIES = {
       { n: '暗夜黑金', B: '#34343c', D: '#e0b828', W: '#5a5a64', E: '#f0d040' },
       { n: '化石白', B: '#ece6d6', D: '#a89a7a', W: '#ffffff', E: '#3a3020' },
     ] },
+  hamster: { name: '仓鼠', map: ['.DD....DD.', '.DBBBBBBD.', 'BBEBBBBEBB', 'BBBBPPBBBB', 'BWWWNNWWWB', 'BWWWWWWWWB', '.BWWWWWWB.', '..BBBBBB..', '..P....P..'],
+    colors: [{ n: '金丝熊', B: '#f0b860', D: '#c08040', W: '#fff4e0' }, { n: '银灰', B: '#c8c8cc', D: '#909098', W: '#ffffff' }, { n: '布丁', B: '#f4d890', D: '#d0a850', W: '#fffaf0' }] },
+  penguin: { name: '企鹅', map: ['...BBBB...', '..BBBBBB..', '..WEWWEW..', '..WWKKWW..', '.BBWWWWBB.', 'BBWWWWWWBB', '.BWWWWWWB.', '.BWWWWWWB.', '..BWWWWB..', '..KK..KK..'],
+    colors: [{ n: '帝企鹅', B: '#2a2e3a', D: '#1a1e28', W: '#ffffff' }, { n: '小蓝', B: '#5a80b0', D: '#3a5a88', W: '#f4f8ff' }] },
+  fox: { name: '狐狸', map: ['B.......B.', 'BB.....BB.', 'BBBBBBBBB.', 'BWEBBBEWB.', '.WWWNWWW..', '..WWWWW..D', '.BBBBBBBDD', '.BBBBBBBDW', '.BB.BB.B..', '.DD.DD.D..'],
+    colors: [{ n: '赤狐', B: '#e07830', D: '#3a2418', W: '#ffffff' }, { n: '北极狐', B: '#f4f4f8', D: '#c0c4cc', W: '#ffffff', E: '#3a3a48' }, { n: '银狐', B: '#5a5a64', D: '#2a2a30', W: '#e8e8ee' }] },
 };
 
 // 成长阶段：k 是体型比例，exp 是需要的成长值
@@ -69,6 +75,31 @@ const YARD_PROPS = {
   flower2: { pal: { P: '#a888d8', Y: '#ffffff', G: '#4f8a2a' }, map: ['.P.', 'PYP', '.P.', '.G.'] },
   grass: { pal: { G: '#4f8a2a' }, map: ['.G..G.', 'GG.GGG'] },
 };
+// 每种动物的性格：想调整某只动物的表现改这里
+// speed 速度倍数；gait 走路方式 walk/hop(蹦着走)/leap(大跳)/float(飘)/waddle(摇摆)
+// acts 专属动作；sleep 睡姿 curl(蜷)/side(侧躺)/float(飘着)/stand(站着)/perch(停树上)
+// home 睡觉去哪 house/tree；say 叫声；dream 梦话；nightOwl 睡前会嚎一声
+const TRAITS = {
+  chick:   { speed: 0.8, gait: 'hop',  acts: ['peck', 'peck', 'flap', 'roll'], sleep: 'curl', home: 'house', say: ['叽', '叽叽'], dream: '🌾' },
+  rabbit:  { speed: 1,   gait: 'hop',  acts: ['binky', 'thump', 'groom', 'loaf'], sleep: 'curl', home: 'house', say: ['…'], dream: '🥕' },
+  dog:     { speed: 1.2, gait: 'walk', acts: ['roll', 'roll', 'dig', 'wag', 'stretch'], sleep: 'side', home: 'house', say: ['汪', '汪汪'], dream: '🦴' },
+  wolf:    { speed: 1.3, gait: 'walk', acts: ['howl', 'stretch', 'roll'], sleep: 'curl', home: 'tree', say: ['嗷呜~'], dream: '🌕', nightOwl: true },
+  cat:     { speed: 0.9, gait: 'walk', acts: ['groom', 'groom', 'stretch', 'roll', 'loaf', 'pounce'], sleep: 'curl', home: 'tree', say: ['喵'], dream: '🐟' },
+  jelly:   { speed: 0.5, gait: 'float', acts: ['glow', 'glow', 'spin'], sleep: 'float', say: ['~'], dream: '🫧' },
+  cheetah: { speed: 2,   gait: 'walk', acts: ['sprint', 'stretch', 'loaf', 'groom'], sleep: 'side', home: 'tree', say: ['呼噜'], dream: '💨' },
+  tit:     { speed: 1,   gait: 'hop',  acts: ['flutter', 'flutter', 'peck'], sleep: 'perch', home: 'tree', say: ['啾', '啾啾'], dream: '🌸' },
+  cow:     { speed: 0.5, gait: 'walk', acts: ['graze', 'graze', 'moo', 'loaf'], sleep: 'stand', say: ['哞~'], dream: '🌿' },
+  frog:    { speed: 0.8, gait: 'leap', acts: ['croak', 'tongue', 'loaf'], sleep: 'curl', say: ['呱', '呱呱'], dream: '🪰' },
+  dino:    { speed: 1.1, gait: 'walk', acts: ['roar', 'stomp', 'roll'], sleep: 'curl', home: 'tree', say: ['嗷!'], dream: '🍖' },
+  hamster: { speed: 1.1, gait: 'walk', acts: ['groom', 'dig', 'roll', 'loaf'], sleep: 'curl', home: 'house', say: ['吱'], dream: '🌻' },
+  penguin: { speed: 0.6, gait: 'waddle', acts: ['slide', 'slide', 'flap'], sleep: 'stand', say: ['嘎'], dream: '🐟' },
+  fox:     { speed: 1.2, gait: 'walk', acts: ['pounce', 'pounce', 'groom', 'roll'], sleep: 'curl', home: 'tree', say: ['嘤'], dream: '🐭' },
+};
+// 动作持续时间（毫秒，最短-最长）
+const ACT_MS = { roll: [2000, 3000], stretch: [1600, 1600], loaf: [4000, 7000], groom: [2500, 4000], wag: [1500, 2500], dig: [2000, 3000],
+  howl: [2500, 3000], peck: [2000, 3500], flap: [1500, 2000], flutter: [2500, 4000], sprint: [1500, 2500], graze: [3000, 5000],
+  moo: [1500, 1500], croak: [1500, 2000], tongue: [1200, 1200], roar: [1500, 1500], stomp: [1500, 2000], glow: [2500, 3500],
+  binky: [2000, 2500], thump: [1500, 2000], slide: [1500, 2500], pounce: [2000, 2000], spin: [2000, 3000] };
 
 const Pet = {
   list: [], view: 'list', curId: null, fx: [], _raf: 0, game: null, back: null, updStats: null,
@@ -130,6 +161,54 @@ visible(p) { return this.isMine(p) || (!this.hasPersona(p) && this.charOwners(p)
     return (ns.length > 1 ? '一起养：' : '主人：') + ns.join('、');
   },
   mapOf(p) { const s = SPECIES[p.sp]; return s.colors[p.color]?.map || s.map; },
+  trait(p) { return { speed: 1, gait: 'walk', acts: ['roll', 'stretch'], sleep: 'curl', say: ['♪'], ...TRAITS[p.sp] }; },
+
+  // 根据动作算出变形：sx/sy 拉伸，rot 旋转，lift 离地，alpha 透明度，jx 抖动
+  pose(p, m, t, now, dir = 1, frame = 0) {
+    const tr = this.trait(p), wob = (sp, a) => Math.sin(now / sp) * a;
+    let sx = 1, sy = 1, rot = 0, lift = 0, alpha = 1, jx = 0;
+    switch (m) {
+      case 'sleep':
+        if (tr.sleep === 'side') rot = dir * Math.PI / 2;
+        else if (tr.sleep === 'float') { lift = 6 + wob(900, 4); alpha = 0.8; }
+        else if (tr.sleep !== 'stand') { sx = 1.1; sy = 0.72; }
+        sy *= 1 + wob(700, 0.03); // 呼吸起伏
+        break;
+      case 'sit': case 'sick': case 'lie': sx = 1.1; sy = 0.75; break;
+      case 'loaf': sx = 1.15; sy = 0.65; break;
+      case 'held': sx = sy = 1.08; break;
+      case 'roll': rot = dir * t / 1000 * Math.PI * 1.6; break;
+      case 'stretch': { const q = Math.sin(Math.min(1, t / 1600) * Math.PI); sx = 1 + q * 0.35; sy = 1 - q * 0.2; break; }
+      case 'wag': rot = wob(80, 0.08); break;
+      case 'groom': rot = wob(200, 0.1); break;
+      case 'howl': rot = -dir * 0.35; break;
+      case 'peck': rot = dir * (Math.floor(now / 150) % 2 ? 0.3 : 0); break;
+      case 'graze': rot = dir * (Math.floor(now / 400) % 2 ? 0.25 : 0.15); break;
+      case 'roar': case 'stomp': jx = frame % 4 < 2 ? 1 : -1; break;
+      case 'dig': jx = frame % 4 < 2 ? 1 : -1; sy = 0.9; break;
+      case 'glow': alpha = 0.6 + wob(200, 0.4); break;
+      case 'thump': sy = Math.floor(now / 200) % 3 === 0 ? 0.85 : 1; break;
+      case 'pounce': if (t < 800) { sx = 1.15; sy = 0.7; } break;
+      case 'slide': rot = dir * Math.PI / 2; break;
+    }
+    if (tr.gait === 'waddle' && (m === 'walk' || m === 'run')) rot = wob(120, 0.12);
+    if (tr.gait === 'float' && m !== 'sleep') lift += 4 + wob(500, 4);
+    return { sx, sy, rot, lift, alpha, jx };
+  },
+
+  // 以脚底中点为基准画变形后的精灵，旋转后也贴着地面。返回点击框
+  blit(ctx, img, cx, bottom, w, h, o) {
+    const dw = w * o.sx, dh = h * o.sy, c = Math.abs(Math.cos(o.rot)), s = Math.abs(Math.sin(o.rot));
+    const hw = (c * dw + s * dh) / 2, hh = (c * dh + s * dw) / 2, base = bottom - o.lift;
+    ctx.save();
+    ctx.globalAlpha *= o.alpha;
+    ctx.translate(Math.round(cx + o.jx), Math.round(base - hh));
+    if (o.rot) ctx.rotate(o.rot);
+    ctx.drawImage(img, -dw / 2, -dh / 2, dw, dh);
+    ctx.restore();
+    return { x: cx - hw, y: base - 2 * hh, w: 2 * hw, h: 2 * hh };
+  },
+
   colorName(p) { return SPECIES[p.sp].colors[p.color]?.n || ''; },
   stage(p) { let i = 0; STAGES.forEach((s, k) => { if ((p.exp || 0) >= s.exp) i = k; }); return i; },
 
@@ -541,61 +620,14 @@ ${recent ? '。最近：' + recent : ''}` };
     for (let i = 0; i < n; i++) this.fx.push({ ch, x: 90 + Math.random() * 60, y: 90 + Math.random() * 20, life: 1 + i * 0.15 });
   },
 
-  // ===== 悬浮按钮：transform 定位，不撑宽页面；位置按比例保存 =====
-  mountFab() {
-    const SIZE = 52;
-    const b = document.createElement('button');
-    b.id = 'pet-fab';
-    b.setAttribute('aria-label', '召唤宠物');
-        b.innerHTML = '<span style="font-size:24px" aria-hidden="true">🐾</span>';
-    document.body.appendChild(b);
 
-    let fx = 0, fy = 0;
-    const place = (x, y) => {
-      const vw = document.documentElement.clientWidth, vh = document.documentElement.clientHeight;
-      fx = Math.max(4, Math.min(vw - SIZE - 4, x));
-      fy = Math.max(4, Math.min(vh - SIZE - 4, y));
-      b.style.transform = `translate(${fx}px, ${fy}px)`;
-    };
-    // 存的是比例（0~1），兼容旧版存的像素值
-    const restore = () => {
-      const vw = document.documentElement.clientWidth, vh = document.documentElement.clientHeight;
-      const s = S.settings.petFab;
-      if (s && s.rx != null) place(s.rx * vw, s.ry * vh);
-      else place(vw - SIZE - 12, vh - SIZE - 110);
-    };
-    restore();
-    addEventListener('resize', restore);
-    addEventListener('orientationchange', () => setTimeout(restore, 300));
-
-    let sx = null, sy, ox, oy, moved = false;
-    b.onpointerdown = e => {
-      sx = e.clientX; sy = e.clientY; ox = fx; oy = fy; moved = false;
-      b.setPointerCapture(e.pointerId);
-    };
-    b.onpointermove = e => {
-      if (sx == null) return;
-      const dx = e.clientX - sx, dy = e.clientY - sy;
-      if (!moved && Math.hypot(dx, dy) < 6) return;
-      moved = true;
-      place(ox + dx, oy + dy);
-    };
-    b.onpointerup = () => {
-      sx = null;
-      if (!moved) return this.toggle();
-      const vw = document.documentElement.clientWidth, vh = document.documentElement.clientHeight;
-      S.settings.petFab = { rx: fx / vw, ry: fy / vh };
-      saveSettings();
-    };
-    b.onpointercancel = () => { sx = null; };
-
-        this.mountYard();
-  },
+    // 不再显示悬浮按钮，入口改成小院里的宠物和小屋
+  mountFab() { this.mountYard(); },
 
   // 宠物有变化时调用，动画循环下一帧会自动用新的宠物
   drawFab() {},
   // ===== 小院：屏幕底部，宠物自己跑来跑去 =====
-    yardCfg() { const c = S.settings.petYard ??= { on: true, scene: true, bottom: 0 }; c.full ??= true; return c; },
+      yardCfg() { const c = S.settings.petYard ??= { on: true, scene: true, bottom: 0 }; c.full ??= true; c.on = true; return c; },
   homeOf(p) { return p.owners.find(o => o.startsWith('p:')) || p.owners[0]; },
   // 宠物现在在谁家：串门中就是对方家，否则是自己家
   loc(p, now = Date.now()) { return p.visit && p.visit.until > now ? p.visit.host : this.homeOf(p); },
@@ -633,17 +665,34 @@ ${recent ? '。最近：' + recent : ''}` };
     const props = () => ({ house: W * 0.08, bowl: W * 0.08 + 34, tree: W * 0.84, flowers: [0.3, 0.47, 0.64, 0.95].map(f => W * f) });
     const sizeOf = p => Math.max(2, Math.round(3.5 * STAGES[this.stage(p)].k));
     const bubble = (a, ch) => { if (bubbles.filter(b => b.a === a).length < 2) bubbles.push({ a, ch, life: 1 }); };
-    const go = (a, mode, ms, extra = {}) => Object.assign(a, { mode, until: performance.now() + ms, chew: false, met: false, ...extra });
-    const busy = o => ['sleep', 'sick', 'held', 'fall'].includes(o.mode);
+       const go = (a, mode, ms, extra = {}) => Object.assign(a, { mode, until: performance.now() + ms, t0: performance.now(), chew: false, met: false, jumped: false, ...extra });
+    const busy = o => ['sleep', 'sick', 'held', 'fall', 'gosleep'].includes(o.mode);
+    // 开始一个专属动作
+    const doAct = (a, act) => {
+      const [lo, hi] = ACT_MS[act] || [2000, 3000], tr = this.trait(a.p);
+      const far = { tx: a.x < W / 2 ? W - a.w - 10 : 10, ty: a.y };
+      go(a, act, R(lo, hi), act === 'sprint' || act === 'slide' ? far : {});
+      if (['moo', 'croak', 'roar', 'howl'].includes(act)) bubble(a, pick(tr.say));
+    };
 
-    const choose = (a, all) => {
-      const p = a.p;
-      if (this.asleep(p)) return go(a, 'sleep', 6000);
+
+        const choose = (a, all) => {
+      const p = a.p, tr = this.trait(p);
+      if (this.asleep(p)) {
+        if (a.mode === 'sleep') return go(a, 'sleep', 6000, { perch: a.perch });
+        // 狼这种夜猫子，睡前先嚎一嗓子
+        if (tr.nightOwl && !a.howled && Math.random() < 0.4) { a.howled = true; bubble(a, pick(tr.say)); return go(a, 'howl', 3000); }
+        // 先走回小屋 / 树下再睡
+        const pr = props(), hx = !cfg().scene ? null : tr.home === 'house' ? pr.house + 6 : tr.home === 'tree' ? pr.tree + 6 : null;
+        if (hx != null && Math.abs(a.x - hx) > 8) return go(a, 'gosleep', 15000, { tx: hx + R(-6, 6), ty: GROUND() });
+        return go(a, 'sleep', 6000, { perch: tr.sleep === 'perch' && hx != null ? 22 : 0 });
+      }
+      a.howled = false;
       if (p.sick) return go(a, 'sick', 6000);
       if (cfg().scene && p.hunger < 35 && Math.random() < 0.6) return go(a, 'eat', 7000, { tx: props().bowl + 20, ty: GROUND() });
       const mates = all.filter(o => o !== a && !busy(o));
       const r = Math.random();
-      if (mates.length && r < 0.25) {
+      if (mates.length && r < 0.2) {
         const o = pick(mates);
         if (Math.random() < 0.5) {
           go(a, 'chase', 6000, { tgt: o });
@@ -652,11 +701,13 @@ ${recent ? '。最近：' + recent : ''}` };
         } else { go(a, 'meet', 4000, { tgt: o }); go(o, 'meet', 4000, { tgt: a }); }
         return;
       }
-      if (r < 0.37) return go(a, 'ball', 6000);
-      if (r < 0.45 && !this.isNight()) return go(a, 'bug', 4000, { fly: pick(flies) });
+      if (r < 0.5) return doAct(a, pick(tr.acts)); // 专属动作
+      if (r < 0.6) return go(a, 'ball', 6000);
+      if (r < 0.67 && !this.isNight()) return go(a, 'bug', 4000, { fly: pick(flies) });
       if (p.happy < 30) return go(a, pick(['sit', 'sit', 'walk']), R(3000, 6000), { tx: R(0, W - a.w), ty: ry() });
-      return go(a, pick(['walk', 'walk', 'run', 'run', 'idle', 'sit', 'hop', 'spin']), R(2500, 5500), { tx: R(0, W - a.w), ty: ry() });
+      return go(a, pick(['walk', 'walk', 'run', 'idle', 'sit', 'hop']), R(2500, 5500), { tx: R(0, W - a.w), ty: ry() });
     };
+
     // 二维移动，到了返回 true
     const toward = (a, tx, ty, sp, k) => {
       tx = Math.max(0, Math.min(W - a.w, tx));
@@ -670,6 +721,7 @@ ${recent ? '。最近：' + recent : ''}` };
 
     const update = (a, k, now, all) => {
       const m = a.mode;
+      const tr = this.trait(a.p), cx = x => Math.max(0, Math.min(W - a.w, x));
       a.y = Math.max(TOP(), Math.min(GROUND(), a.y));
       if (m !== 'held') {
         a.v -= 0.35 * k;
@@ -684,7 +736,43 @@ ${recent ? '。最近：' + recent : ''}` };
         }
       }
       const ground = a.h === 0;
-      if (m === 'walk' || m === 'run') { if (toward(a, a.tx, a.ty, m === 'run' ? 1.8 : 0.7, k)) go(a, 'idle', R(800, 2000)); }
+            if (m === 'walk' || m === 'run') {
+        const sp = (m === 'run' ? 1.8 : 0.7) * tr.speed;
+        if (tr.gait === 'hop' || tr.gait === 'leap') {
+          // 蹦着走：只在空中前进
+          if (ground) { if (Math.random() < (tr.gait === 'leap' ? 0.04 : 0.1) * k) a.v = tr.gait === 'leap' ? R(4, 6) : R(2, 3); }
+          else if (toward(a, a.tx, a.ty, sp * (tr.gait === 'leap' ? 2.5 : 1.6), k)) go(a, 'idle', R(800, 2000));
+        } else if (toward(a, a.tx, a.ty, sp, k)) go(a, 'idle', R(800, 2000));
+      }
+      else if (m === 'gosleep') {
+        if (frame % 90 === 0) bubble(a, '🥱');
+        if (toward(a, a.tx, a.ty, 0.6, k)) go(a, 'sleep', 6000, { perch: tr.sleep === 'perch' ? 22 : 0 });
+      }
+      else if (m === 'roll') { a.x = cx(a.x + a.dir * 0.6 * k); if (frame % 60 === 0) bubble(a, pick(['♪', '✨'])); }
+      else if (m === 'binky' || m === 'stomp' || m === 'flap') {
+        if (ground && Math.random() < (m === 'stomp' ? 0.12 : 0.06) * k) {
+          a.v = m === 'binky' ? R(4, 6) : m === 'flap' ? 2.5 : 1.5;
+          if (m === 'binky') { a.dir *= -1; bubble(a, '♪'); }
+        }
+      }
+      else if (m === 'flutter') {
+        if (a.h < R(15, 40)) a.v = Math.max(a.v, 1.3);
+        a.x = cx(a.x + a.dir * 0.6 * k);
+        if (Math.random() < 0.01 * k) a.dir *= -1;
+      }
+      else if (m === 'sprint' || m === 'slide') {
+        if (toward(a, a.tx, a.ty, m === 'sprint' ? 4 : 2.5, k)) go(a, m === 'sprint' ? 'loaf' : 'idle', 1500);
+      }
+      else if (m === 'pounce') {
+        if (now - a.t0 > 800 && !a.jumped) { a.jumped = true; a.v = 5; bubble(a, '!'); }
+        if (a.h > 0) a.x = cx(a.x + a.dir * 2.5 * k);
+      }
+      else if (m === 'graze' || m === 'peck') { if (frame % 100 === 0) bubble(a, m === 'graze' ? '🌿' : '·'); }
+      else if (m === 'groom') { if (frame % 90 === 0) bubble(a, '✨'); }
+      else if (m === 'dig') { if (frame % 70 === 0) bubble(a, pick(['🦴', '·', '?'])); }
+      else if (m === 'tongue') { if (frame % 60 === 0) bubble(a, '👅'); }
+      else if (m === 'wag') { if (frame % 60 === 0) bubble(a, '♥'); }
+      else if (m === 'glow' || m === 'spin') { if (m === 'spin' && frame % 8 === 0) a.dir *= -1; if (frame % 60 === 0) bubble(a, '♪'); }
       else if (m === 'hop') {
         if (!ground) a.x = Math.max(0, Math.min(W - a.w, a.x + a.dir * 0.9 * k));
         else if (Math.random() < 0.05 * k) { a.v = R(3, 5); a.dir = a.tx > a.x ? 1 : -1; }
@@ -712,10 +800,7 @@ ${recent ? '。最近：' + recent : ''}` };
       } else if (m === 'bug') {
         toward(a, a.fly.x - a.w / 2, cfg().full ? a.fly.y + 20 : GROUND(), 1.6, k);
         if (ground && Math.random() < 0.03 * k) a.v = 4;
-      } else if (m === 'spin') {
-        if (frame % 8 === 0) a.dir *= -1;
-        if (frame % 60 === 0) bubble(a, '♪');
-      } else if (m === 'sleep') { if (frame % 50 === 0) bubble(a, 'z'); }
+           } else if (m === 'sleep') { if (frame % 50 === 0) bubble(a, tr.dream && Math.random() < 0.15 ? tr.dream : 'z'); }
       else if (m === 'sick') { if (frame % 70 === 0) bubble(a, '💧'); }
       else if (m === 'idle' && Math.random() < 0.004 * k) a.dir *= -1;
       if (now > a.until && m !== 'held' && m !== 'fall') choose(a, all);
@@ -728,24 +813,23 @@ ${recent ? '。最近：' + recent : ''}` };
       ctx.fillRect(Math.round(x + i * s), Math.round(bottom - (def.map.length - j) * s), s, s);
     }));
 
-    const drawPet = (a, now) => {
-      const p = a.p, s = a.s, map = this.mapOf(p), w = map[0].length * s, h = map.length * s;
-      const blink = a.mode === 'sleep' || (now + a.seed) % 3500 < 150;
-      const squash = ['sit', 'sleep', 'sick'].includes(a.mode) ? 0.75 : a.mode === 'held' ? 1.08 : 1;
+        const drawPet = (a, now) => {
+      const p = a.p, s = a.s, map = this.mapOf(p), w = map[0].length * s, h = map.length * s, tr = this.trait(p);
+      const o = this.pose(p, a.mode, now - (a.t0 || now), now, a.dir, frame);
+      if (a.mode === 'sleep' && a.perch) o.lift += a.perch; // 山雀停在树枝上
+      if (a.mode === 'sick' && frame % 4 < 2) o.jx += 1;
+      const blink = a.mode === 'sleep' || (a.mode === 'groom' && Math.floor(now / 600) % 2) || (now + a.seed) % 3500 < 150;
       let bob = 0;
-      if (['walk', 'run', 'chase', 'ball', 'bug', 'meet'].includes(a.mode) && a.h === 0) bob = Math.floor(now / (a.mode === 'walk' ? 180 : 100)) % 2;
-      if (a.chew) bob = Math.floor(now / 250) % 2;
+      if (['walk', 'run', 'chase', 'ball', 'bug', 'meet', 'sprint'].includes(a.mode) && a.h === 0 && tr.gait !== 'float')
+        bob = Math.floor(now / (a.mode === 'walk' ? 180 : 100)) % 2;
+      if (a.chew || a.mode === 'graze') bob = Math.floor(now / 250) % 2;
       off.width = map[0].length; off.height = map.length;
       octx.clearRect(0, 0, off.width, off.height);
       this.drawSprite(octx, p, 0, 0, 1, { blink, flip: a.dir < 0 });
-      const dw = squash < 1 ? w * 1.1 : w * squash, dh = h * squash;
-      const jit = a.mode === 'sick' && frame % 4 < 2 ? 1 : 0;
-      const dx = Math.round(a.x + jit + (w - dw) / 2), dy = Math.round(a.y - dh - a.h - bob);
       // 影子：离地越高越淡
-      ctx.globalAlpha = Math.max(0.05, 0.22 - a.h / 300); ctx.fillStyle = '#000';
+      ctx.globalAlpha = Math.max(0.05, 0.22 - (a.h + o.lift) / 300); ctx.fillStyle = '#000';
       ctx.fillRect(Math.round(a.x + 2), Math.round(a.y) - 1, w - 4, 2); ctx.globalAlpha = 1;
-      ctx.drawImage(off, dx, dy, dw, dh);
-      a.box = { x: dx, y: dy, w: dw, h: dh };
+      a.box = this.blit(ctx, off, a.x + w / 2, a.y - a.h - bob, w, h, o);
     };
 
     const loop = now => {
@@ -787,13 +871,13 @@ ${recent ? '。最近：' + recent : ''}` };
       ctx.imageSmoothingEnabled = false;
       ctx.clearRect(0, 0, W, H);
       const night = this.isNight();
-
+      // 小屋是打开宠物面板的入口，隐藏场景时也保留
+      drawMap(YARD_PROPS.house, props().house, G, 3);
       if (c.scene) {
         const pr = props();
         ctx.fillStyle = col.g; ctx.fillRect(0, G, W, 6);
         for (let x = 11; x < W; x += 41) drawMap(YARD_PROPS.grass, x, G, 2);
         drawMap(YARD_PROPS.tree, pr.tree, G, 3);
-        drawMap(YARD_PROPS.house, pr.house, G, 3);
         drawMap(YARD_PROPS.bowl, pr.bowl, G, 2);
         pr.flowers.forEach((x, i) => drawMap(i % 2 ? YARD_PROPS.flower2 : YARD_PROPS.flower, x, G, 2));
         const poop = Math.min(5, this.list.filter(p => this.isMine(p) && this.loc(p) === this.me()).reduce((s, p) => s + (p.poop || 0), 0));
@@ -853,9 +937,21 @@ ${recent ? '。最近：' + recent : ''}` };
       return [...A.values()].sort((p, q) => q.y - p.y).find(a => a.box && cx >= a.box.x - 6 && cx <= a.box.x + a.box.w + 6
         && cy >= a.box.y - 6 && cy <= a.box.y + a.box.h + 6) || null;
     };
+    // 小屋：9×8 像素，放大 3 倍
+    const hitHouse = (cx, cy) => {
+      if (cv.style.display === 'none') return false;
+      const hx = props().house, G = GROUND();
+      return cx >= hx - 4 && cx <= hx + 27 + 4 && cy >= G - 24 - 4 && cy <= G + 4;
+    };
     addEventListener('pointerdown', e => {
-      const a = hitAt(e.clientX, e.clientY);
-      if (!a) return;
+            const a = hitAt(e.clientX, e.clientY);
+      if (!a) {
+        if (!hitHouse(e.clientX, e.clientY)) return;
+        e.preventDefault(); e.stopPropagation();
+        eatClick = true; // 吞掉这次点击，免得刚打开的面板被当成点遮罩关掉
+        this.renderList();
+        return;
+      }
       e.preventDefault(); e.stopPropagation();
       drag = { a, sx: e.clientX, sy: e.clientY, lx: e.clientX, vx: 0, moved: false };
     }, true);
@@ -894,7 +990,6 @@ ${recent ? '。最近：' + recent : ''}` };
   async yardSettings() {
     const c = this.yardCfg();
     const a = await actionSheet([
-      { label: c.on ? '收起小院' : '显示小院', value: 'on' },
       { label: c.full ? '只在底部跑' : '满屏幕跑', value: 'full' },
       { label: c.scene ? '隐藏场景（只留宠物）' : '显示场景', value: 'scene' },
       { label: `离屏幕底部的距离（现在 ${c.bottom || 0}px）`, value: 'bottom' },
@@ -962,29 +1057,6 @@ ${recent ? '。最近：' + recent : ''}` };
     this.startVisit(p, host, hours, charId, come ? '邀请它来家里玩' : `带它去${this.who(host)}家玩`);
     await this.save();
     return { sender: charId, type: 'sys', content: `${this.who(charId)}${come ? `邀请「${p.name}」来家里玩` : `带「${p.name}」去${this.who(host)}家玩`}（${hours}小时）` };
-  },
-
-  fabPet() {
-    return this.list.find(p => this.isMine(p)) || { sp: 'chick', color: 0, demo: true };
-  },
-
-  // 动态图标：走路 / 跳 / 眨眼 / 趴下 / 睡觉 / 生病
-  startFabAnim() {
-    const cv = $('#pet-fab canvas'), ctx = cv.getContext('2d');
-    const off = document.createElement('canvas'), octx = off.getContext('2d');
-    const W = 48, GROUND = 45, S3 = 3;
-    let last = 0, mode = 'idle', until = 0, x = 9, dir = 1, frame = 0, zs = [];
-
-    const pickMode = (p, now) => {
-      if (!p.demo) {
-        if (this.asleep(p)) return 'sleep';
-        if (p.sick) return 'sick';
-        if (p.hunger < 20 || p.happy < 25) return 'lie';
-      }
-      if (now < until && !['sleep', 'sick'].includes(mode)) return mode;
-      until = now + 3000 + Math.random() * 3000;
-      return pick(['walk', 'walk', 'hop', 'idle', 'lie']);
-    };
 
     const loop = now => {
       this._fabRaf = requestAnimationFrame(loop);

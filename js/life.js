@@ -440,6 +440,52 @@ ${post.comments.map(c => `${nm(c.from)}${c.to ? '→' + nm(c.to) : ''}：${c.tex
       });
     });
   },
+  // 编辑某条动态的配图：重新生成 / 改描述 / 换链接 / 删除
+  async editImage(pid, post) {
+    let k = 0;
+    if (post.images.length > 1) {
+      const pickK = await actionSheet(post.images.map((im, i) => ({ label: `第 ${i + 1} 张：${(im.desc || '无描述').slice(0, 20)}`, value: String(i) })));
+      if (pickK == null || pickK === '') return;
+      k = Number(pickK);
+    }
+    const im = post.images[k];
+    if (!im) return;
+    const { style, desc } = Media.splitLabel(im.desc);
+    const hasPrefix = /^（[^）]{1,8}）/.test(im.desc || '');
+    const act = await actionSheet([
+      ...(style !== '宠物截图' ? [{ label: '重新生成（可加提示词）', value: 'regen' }] : []),
+      { label: '改描述（不重新生成）', value: 'desc' },
+      { label: '换成图片链接', value: 'link' },
+      { label: '删除这张', value: 'del', danger: true },
+    ]);
+    if (!act) return;
+    const set = fn => this.update(pid, post.id, x => { if (x.images[k]) fn(x.images[k], x); });
+
+    if (act === 'regen') {
+      const r = await Media.regen(im.desc, charById(post.author));
+      if (r) { await set(i => { i.url = r.url; i.desc = r.desc; }); toast('已换成新图'); }
+    }
+    if (act === 'desc') {
+      const t = (await editText('配图描述（角色看到的就是这段）', desc))?.trim();
+      if (!t) return;
+      await set(i => { i.desc = hasPrefix ? `（${style}）${t}` : t; });
+    }
+    if (act === 'link') {
+      const u = (await editText('图片链接', '', false))?.trim();
+      if (!u) return;
+      if (!/^https?:\/\//i.test(u)) return toast('链接要以 http 开头');
+      let d = im.desc;
+      if (S.settings.claude.key) {
+        toast('识别图片中…');
+        try { d = await Media.describe(u); } catch (e) { console.warn(e); }
+      }
+      await set(i => { i.url = u; i.desc = d; });
+    }
+    if (act === 'del') {
+      if (!post.text && post.images.length === 1) return toast('文字和配图不能都没有，要删就删整条');
+      await this.update(pid, post.id, x => { x.images.splice(k, 1); });
+    }
+  },
 };
 
 document.addEventListener('pp:moment', () => { if (Router.cur()?.name === 'moments') Router.render(); });
@@ -503,12 +549,31 @@ Views.moments = async () => {
       await Moments.update(pid, postId, x => x.comments.push({ id: uid(), from: 'user', to: null, text: t, ts: Date.now() }));
       return Moments.later(pid, postId, p.name);
     }
-    if (a === 'more') {
-      const act = await actionSheet([{ label: '让大家来互动', value: 'react' }, { label: '删除这条动态', value: 'del', danger: true }]);
+       if (a === 'more') {
+      const act = await actionSheet([
+        { label: '编辑文字', value: 'text' },
+        ...(post.trans ? [{ label: '编辑译文', value: 'trans' }] : []),
+        ...(post.images.length ? [{ label: '编辑配图', value: 'img' }] : []),
+        { label: '让大家来互动', value: 'react' },
+        { label: '删除这条动态', value: 'del', danger: true },
+      ]);
+      if (act === 'text') {
+        const t = await editText('编辑动态文字', post.text || '');
+        if (t === null) return;
+        if (!t.trim() && !post.images.length) return toast('文字和配图不能都没有');
+        await Moments.update(pid, postId, x => { x.text = t.trim(); });
+      }
+      if (act === 'trans') {
+        const t = await editText('编辑译文（清空 = 删除译文）', post.trans || '');
+        if (t === null) return;
+        await Moments.update(pid, postId, x => { x.trans = t.trim(); });
+      }
+      if (act === 'img') await Moments.editImage(pid, post);
       if (act === 'react') { toast('等等看…'); Moments.react(pid, postId); }
       if (act === 'del') await Moments.save(pid, all.filter(x => x.id !== postId));
       return;
     }
+
     const c = post.comments.find(x => x.id === e.target.closest('[data-cid]')?.dataset.cid);
     if (!c) return;
     if (c.from === 'user') {

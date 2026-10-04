@@ -461,6 +461,7 @@ async function msgActions(m) {
    if (m.sender !== 'user' && m.type !== 'offline') items.push({ label: '重新生成这一轮', value: 'regen' });
   items.push({ label: '删除', value: 'del', danger: true });
     if (m.url) items.unshift(...Media.actions(m));
+  if (m.type === 'image' && m.gen && m.style !== '宠物截图') items.unshift({ label: '重新生成图片', value: 'm_regen' });
   const a = await actionSheet(items);
   if (await Media.doAction(a, m)) return;
   if (a === 'quote') return ChatUI.setQuote(m);
@@ -967,6 +968,14 @@ ${o.persona || '（无）'}
       if (!url) return false;
       g.avatar = url;
       await DB.put('groups', g);
+    if (a === 'm_regen') {
+      const r = await this.regen(m.desc || m.content, charById(m.sender));
+      if (!r) return true;
+      Object.assign(m, { url: r.url, desc: r.desc, content: r.desc, style: r.style });
+      await DB.put('msgs', m);
+      ChatUI.refresh();
+      toast('已换成新图');
+    }
       return true;
     } catch (e) {
       Log.add('群头像生成失败', e.message);

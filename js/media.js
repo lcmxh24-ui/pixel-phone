@@ -71,6 +71,58 @@ const Media = {
     if (m) return { style: m[1].trim(), desc: m[2].trim() };
     return { style: def, desc: String(s).trim() };
   },
+  // 「（风格）描述」拆回风格和描述。用户自己发的图没有前缀，按随拍处理
+  splitLabel(label) {
+    const m = String(label || '').match(/^（([^）]{1,8})）([\s\S]*)$/);
+    return m ? { style: m[1], desc: m[2].trim() } : { style: '随拍', desc: String(label || '').trim() };
+  },
+
+  // 重新生成的弹窗：可以改类型、描述，加补充提示词。取消返回 null
+  regenForm(label) {
+    const { style, desc } = this.splitLabel(label);
+    return new Promise(res => {
+      const { el, mask, close } = modal(`<h3>重新生成图片</h3>
+        <label class="field"><span>类型</span><input id="rg-s" value="${esc(style)}" list="rg-styles"></label>
+        <datalist id="rg-styles">${Object.keys(IMG_STYLES).map(k => `<option value="${esc(k)}">`).join('')}</datalist>
+        <label class="field"><span>画面描述</span><textarea id="rg-d" rows="3">${esc(desc)}</textarea></label>
+        <label class="field"><span>补充提示词（可不填，写英文会原样加到最后）</span>
+          <textarea id="rg-x" rows="2" placeholder="比如：一定是水豚，不要画成狗"></textarea></label>
+        <div class="flex" style="justify-content:flex-end;gap:6px;margin-top:10px">
+          <button class="btn ghost" data-a="no">取消</button><button class="btn" data-a="ok">生成</button></div>`);
+      const done = v => { close(); res(v); };
+      mask.onclick = e => { if (e.target === mask) done(null); };
+      el.onclick = e => {
+        const a = e.target.closest('[data-a]')?.dataset.a;
+        if (a === 'no') return done(null);
+        if (a !== 'ok') return;
+        const d = $('#rg-d', el).value.trim();
+        if (!d) return toast('写一下画面描述');
+        done({ style: $('#rg-s', el).value.trim() || style, desc: d, extra: $('#rg-x', el).value.trim() });
+      };
+    });
+  },
+
+  // 弹窗 → 生图。成功返回 { url, desc, style }，失败或取消返回 null
+  async regen(label, ch = null) {
+    if (!S.settings.image.url) { toast('还没配置生图接口'); return null; }
+    const v = await this.regenForm(label);
+    if (!v) return null;
+    toast('重新生成中，可能要等十几秒…', 4000);
+    // 补充提示词：中文的并进描述一起翻译，纯英文的直接拼到最后
+    const isEn = v.extra && !/[\u4e00-\u9fff]/.test(v.extra);
+    const desc = v.extra && !isEn ? `${v.desc}。重点要求（必须遵守）：${v.extra}` : v.desc;
+    try {
+      let prompt = await this.makePrompt(desc, v.style, ch);
+      if (isEn) prompt += ', ' + v.extra;
+      const url = await this.genImage(prompt);
+      if (!url) throw new Error('没有返回图片');
+      return { url, desc: `（${v.style}）${v.desc}`, style: v.style };
+    } catch (e) {
+      Log.add('重新生成图片失败', e.message);
+      toast('生成失败：' + e.message, 3000);
+      return null;
+    }
+  },
 
   // 中文描述 → 英文提示词 + 风格词
     async makePrompt(desc, style, ch = null, purpose = 'photo') {
@@ -78,8 +130,8 @@ const Media = {
     let main = desc, custom = '';
     if (S.settings.image.translate !== false && S.settings.claude.key) {
       try {
-        const sys = `You write prompts for an image generation model. Turn the Chinese description into ONE line of English, comma-separated visual keywords, under 60 words.
-Describe what is visible: subject, setting, lighting, colors, mood. No text or watermarks.${known ? ' Do not add style words (style is added separately).' : ' A style is given in brackets: end the line with a few English keywords for that style.'}${purpose === 'avatar' ? ' It is a profile picture.' : ''} Output only the prompt.`;
+               const sys = `You write prompts for an image generation model. Turn the Chinese description into ONE line of English, comma-separated visual keywords, under 60 words.
+Describe what is visible: subject, setting, lighting, colors, mood. No text or watermarks.${known ? ' Do not add style words (style is added separately).' : ' A style is given in brackets: end the line with a few English keywords for that style.'}${purpose === 'avatar' ? ' It is a profile picture.' : ''} If the description contains 重点要求, follow it strictly and put the main subject first, stated clearly (e.g. "a capybara"). Output only the prompt.`;
         const art = ch?.artStyle && !PHOTO_STYLES.includes(style) ? `\n（作者的画风偏好：${ch.artStyle}）` : '';
         const st = known ? '' : `\n（风格：${style}）`;
         main = (await API.claude(sys, [{ role: 'user', content: desc + st + art }], { maxTokens: 200, temperature: 0.5 })).split('\n')[0].trim() || desc;

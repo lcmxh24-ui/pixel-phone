@@ -222,9 +222,6 @@ input,textarea,select{font-size:max(16px,var(--font-size,15px))}
 /* ===== 宠物 ===== */
 #modal-root .mask{z-index:1000!important}
 .toast{z-index:1100!important}
-#pet-fab{position:fixed;right:14px;bottom:calc(env(safe-area-inset-bottom) + 90px);z-index:800;width:52px;height:52px;padding:6px;
-  background:var(--accent);border:2px solid var(--border);box-shadow:3px 3px 0 var(--border);touch-action:none;cursor:pointer}
-#pet-fab canvas,.pet-mini,.pet-sp canvas,#pet-prev,#pet-stage,.pg-cv{image-rendering:pixelated}
 #pet-root{position:fixed;inset:0;z-index:900;background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;padding:12px}
 #pet-root[hidden]{display:none}
 .pet-panel{width:100%;max-width:380px;max-height:88vh;overflow-y:auto;-webkit-overflow-scrolling:touch}
@@ -265,13 +262,6 @@ body{position:fixed;inset:0}
   #statusbar{padding-top:env(safe-area-inset-top)}
   #screen{flex:1;min-height:0}
 }
-
-/* 宠物按钮：transform 定位，不占布局 */
-#pet-fab{position:fixed!important;left:0!important;top:0!important;right:auto!important;bottom:auto!important;
-  width:52px;height:52px;padding:2px;z-index:900;touch-action:none;will-change:transform;
-  background:var(--panel);border:2px solid var(--border);box-shadow:2px 2px 0 var(--border);
-  -webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent}
-#pet-fab canvas{width:44px;height:44px;image-rendering:pixelated;display:block;pointer-events:none}
 
 /* ===== 翻译 ===== */
 .bubble .tr{
