@@ -2353,6 +2353,91 @@ const PetGames = {
       const tiles = this.TILES.map(t => ({ ...t, owner: null, lv: 0 }));
       let players = [], cur = 0, round = 1, MAX = 20, dice = [], logs = [], chat = [], evt = '', stopped = false, ev = null, hl = null;
       let diff = 1; // 简单 1.5，普通 1，困难 0.35
+      // ===== 组队 =====
+      let teams = null; // 组队赛时是 [{ n: 队名, i: 图标, ids: [玩家ID...] }]，个人赛是 null
+      const TEAM_N = [['红队', '🔴'], ['蓝队', '🔵'], ['绿队', '🟢'], ['黄队', '🟡'], ['紫队', '🟣'], ['橙队', '🟠'], ['白队', '⚪'], ['黑队', '⚫']];
+      const mkTeam = i => ({ n: TEAM_N[i]?.[0] || `${i + 1}队`, i: TEAM_N[i]?.[1] || '🏳️', ids: [] });
+      const teamOf = pl => teams?.find(t => t.ids.includes(pl.id));
+      const sameTeam = (a, b) => !!teams && a !== b && teamOf(a) === teamOf(b);
+      // 人少的队每人多发的起始资金（补偿掷骰次数少）
+      const bonusOf = (money, big, n) => Math.round(money * (big / n - 1) * 0.5 / 10) * 10;
+      // 随机分：打乱后轮流发牌，每队人数最多差 1
+      const randomTeams = (chars, tn) => {
+        const all = ['user', ...chars.map(c => c.id)].sort(() => Math.random() - 0.5);
+        const list = Array.from({ length: tn }, (_, i) => mkTeam(i));
+        all.forEach((id, i) => list[i % tn].ids.push(id));
+        return list;
+      };
+         // 读最近的聊天，看有没有人说过想和谁组队
+      const recentTalk = async chars => {
+        const ids = new Set(chars.map(c => c.id)), out = [];
+        const fmt = (ms, n) => ms.filter(m => ['text', 'voice'].includes(m.type)).slice(-n)
+          .map(m => `${senderName(m, pid)}：${preview(m, false, pid).slice(0, 60)}`).join('\n');
+        // 群聊：这一局里有人在的群（你不在的群至少要有两个参赛角色）
+        for (const g of S.groups) {
+          if (g.personaId !== pid) continue;
+          const n = g.members.filter(id => ids.has(id)).length;
+          if (n < (g.userIn === false ? 2 : 1)) continue;
+          const t = fmt(await getMsgs(Conv.g(g.id)), 20);
+          if (t) out.push(`【群「${g.name}」最近的聊天】\n${t}`);
+        }
+        // 私聊：你和每个参赛角色
+        for (const c of chars) {
+          const t = fmt(await getMsgs(Conv.dm(pid, c.id)), 10);
+          if (t) out.push(`【${me.name}和${c.name}的私聊】\n${t}`);
+        }
+ // 角色之间的私聊：两个人都参赛、而且互相认识的才读
+        for (let i = 0; i < chars.length; i++) for (let j = i + 1; j < chars.length; j++) {
+          const a = chars[i], b = chars[j];
+          if (!knows(a.id, b.id, pid)) continue;
+          const t = fmt(await getMsgs(Conv.cc(pid, a.id, b.id)), 10);
+          if (t) out.push(`【${a.name}和${b.name}的私聊】\n${t}`);
+        }
+        return out.join('\n\n').slice(-5000); // 太长就只留最近的，控制费用
+      };
+      // 角色自己选：按设定、世界书、彼此关系和聊天记录分队，解析不出来返回 null
+      const aiTeams = async (chars, tn) => {
+        const names = chars.map(c => c.name);
+        const wb = WB.build(chars.map(c => c.id), '').constant;
+        // 角色两两之间的关系
+        const pairs = [];
+        for (let i = 0; i < chars.length; i++) for (let j = i + 1; j < chars.length; j++) {
+          const a = chars[i], b = chars[j];
+          pairs.push(`${a.name} 和 ${b.name}：${knows(a.id, b.id, pid) ? (getRel(a.id, b.id, pid).desc || '认识') : '不认识'}`);
+        }
+        const talkLog = await recentTalk(chars);
+        const system = [
+          `${me.name}约了${names.join('、')}一起玩宠物大富翁组队赛，一共 ${chars.length + 1} 个人，要分成 ${tn} 队。请按每个人的性格和彼此的关系，决定他们想和谁一队。`,
+          wb && `【世界设定】\n${wb}`,
+          ...chars.map(c => `【${c.name}】\n${(c.persona || '（见世界设定）').slice(0, 500)}\n和${me.name}的关系：${getRel(pid, c.id).desc || '认识'}`),
+          pairs.length && `【角色之间的关系】\n${pairs.join('\n')}`,
+          talkLog && `【最近的聊天记录】\n${talkLog}`,
+          `【要求】\n- 聊天记录里有人明确说过想和谁组队（或者不想和谁一队），优先照办，除非这样人数会差太多。\n- 其次看关系：关系好的、有默契的、想一起赢的容易一队；有矛盾、想较劲的可以分开。\n- 正好 ${tn} 行，每行一队，格式：队1：名字、名字\n- 每个人（包括${me.name}）都要出现，只出现一次，每队至少 1 人，人数尽量平均。\n- 最后一行写：理由：用一句话说说为什么这样组。`,
+        ].filter(Boolean).join('\n\n');
+        const out = await API.claude(system, [{ role: 'user', content: '开始分队' }], { maxTokens: 300 });
+        const all = [{ id: 'user', name: me.name }, ...chars.map(c => ({ id: c.id, name: c.name }))];
+        const list = Array.from({ length: tn }, (_, i) => mkTeam(i)), used = new Set();
+        let k = 0;
+        for (const line of out.split('\n')) {
+          const why = line.match(/^\s*理由\s*[:：]\s*(.+)/);
+          if (why) { list.why = why[1].trim(); continue; }
+          const m = line.match(/队[^:：]*[:：](.+)/);
+          if (!m || k >= tn) continue;
+          for (const raw of m[1].split(/[、,，\s]+/)) {
+            const nm = raw.trim();
+            const x = all.find(a => !used.has(a.id) && (a.name === nm || (a.id === 'user' && nm === '我')));
+            if (x) { list[k].ids.push(x.id); used.add(x.id); }
+          }
+          if (list[k].ids.length) k++;
+        }
+        if (!k) return null;
+        // 漏掉的人放进人最少的队；空队从人最多的队挪一个过来
+        const minT = () => list.reduce((m, x) => (x.ids.length < m.ids.length ? x : m));
+        const maxT = () => list.reduce((m, x) => (x.ids.length > m.ids.length ? x : m));
+        for (const a of all) if (!used.has(a.id)) minT().ids.push(a.id);
+        for (const t of list) if (!t.ids.length && maxT().ids.length > 1) t.ids.push(maxT().ids.pop());
+        return list;
+      };
 
       // ---- 规则 ----
       const byId = id => players.find(x => x.id === id);
@@ -2367,7 +2452,10 @@ const PetGames = {
       const worth = pl => pl.out ? -1 : pl.money + tiles.filter(t => t.owner === pl.id).reduce((s, t) => s + t.price + t.lv * upCost(t), 0);
       const standing = (n = 99) => [...players].sort((a, b) => worth(b) - worth(a)).slice(0, n)
         .map(x => `${x.name}${x.out ? '（破产）' : ` 现金¥${x.money} 地${tiles.filter(t => t.owner === x.id).length}块`}`).join('，');
-
+      // 队伍人均资产（破产的人算 0）
+      const teamWorth = t => Math.round(t.ids.reduce((s, id) => s + Math.max(0, worth(byId(id))), 0) / t.ids.length);
+      const aliveTeams = () => teams.filter(t => t.ids.some(id => !byId(id).out));
+      const teamText = () => teams.map(t => `${t.i}${t.n}（${t.ids.map(id => byId(id).name).join('、')}）人均¥${teamWorth(t)}`).join('，');
       // ---- 棋盘坐标：9×9 外圈，起点在右下角，顺时针 ----
             const pos = i => {
         const S = CELL;
@@ -2431,7 +2519,7 @@ const PetGames = {
           ctx.fillStyle = pl.color; ctx.fillRect(cx + 3, cy + rh / 2 - 4, 6, 6);
           ctx.fillStyle = C.text; ctx.font = `${fs}px sans-serif`;
           const it = Object.entries(pl.items).filter(([, v]) => v).map(([k, v]) => ITEMS[k].i + (v > 1 ? v : '')).join('');
-          ctx.fillText(`${pl.talent.i}${pl.name.slice(0, cols > 1 ? 3 : 5)} ¥${pl.money}${pl.out ? ' 破产' : pl.skip ? ' 🏥' : ''}${cols > 1 ? '' : ' ' + it}`,
+          ctx.fillText(`${teamOf(pl)?.i || ''}${pl.talent.i}${pl.name.slice(0, cols > 1 ? 3 : 5)} ¥${pl.money}${pl.out ? ' 破产' : pl.skip ? ' 🏥' : ''}${cols > 1 ? '' : ' ' + it}`,
             cx + 12, cy + rh / 2 + fs / 2 - 2);
           ctx.globalAlpha = 1;
         });
@@ -2528,7 +2616,7 @@ const PetGames = {
         ].filter(Boolean).join('\n\n');
 
         const task = [
-          `【局面】第 ${round}/${MAX} 轮。${standing(6)}`,
+            `【局面】第 ${round}/${MAX} 轮。${standing(6)}${teams ? `\n这是组队赛，队友之间不收过路费：${teamText()}` : ''}`,
           `【刚才发生的】\n${logs.slice(0, 6).reverse().map(l => l.text).join('\n')}`,
           chat.length && `【聊天框】\n${chat.slice(-8).map(x => x.name + '：' + x.text).join('\n')}`,
           userText ? `${me.name}刚刚在聊天框说：${userText}。要有人回应。` : `${desc}。${sp ? `这次主要是${sp.name}开口，` : ''}说一两句就行。`,
@@ -2673,6 +2761,7 @@ const PetGames = {
             if (!mine && t.lv === 3) react(`${pl.name}把${t.n}升成了宠物乐园，过路费很贵`, pl.id);
           } else {
             const o = byId(t.owner), r = rentFor(t, pl);
+  if (sameTeam(pl, o)) return log(`${pl.name}路过队友${o.name}的${t.n}，不用交过路费`, pl);
             const opts = [];
             if (pl.items.free) opts.push({ label: `🛡️ 用免租卡（还剩 ${pl.items.free} 张）`, value: 'free' });
             if (pl.items.steal && t.lv === 0 && !setOwned(t) && pl.money >= t.price) opts.push({ label: `🃏 用抢地卡，付 ¥${t.price} 给${o.name}，把地买过来`, value: 'steal' });
@@ -2811,15 +2900,28 @@ const PetGames = {
 
       const finishGame = async () => {
         clearInterval(animT);
-        const rank = [...players].sort((a, b) => worth(b) - worth(a)), win = rank[0];
-        const place = rank.indexOf(players[0]) + 1;
-        const summary = `${win.name}赢了。` + rank.map((x, i) => `第${i + 1}名${x.name}（${x.out ? '破产' : '总资产¥' + worth(x)}）`).join('，');
-        log(`🏆 ${win.name}赢了`, win);
+        const rank = [...players].sort((a, b) => worth(b) - worth(a));
+        let title, listHtml, summary, place;
+        if (teams) {
+          const tr = [...teams].sort((a, b) => teamWorth(b) - teamWorth(a)), win = tr[0];
+          const names = t => t.ids.map(id => byId(id).name).join('、');
+          place = tr.indexOf(teamOf(players[0])) + 1;
+          title = `${win.i}${win.n}赢了`;
+          summary = `组队赛，${win.n}（${names(win)}）赢了。` + tr.map((t, i) => `第${i + 1}名${t.n}（${names(t)}，人均¥${teamWorth(t)}）`).join('，') + `。个人资产最高的是${rank[0].name}`;
+          listHtml = tr.map(t => `<li>${t.i}${esc(t.n)}（${esc(names(t))}）：人均 ¥${teamWorth(t)}</li>`).join('');
+        } else {
+          const win = rank[0];
+          place = rank.indexOf(players[0]) + 1;
+          title = `${win.name}赢了`;
+          summary = `${win.name}赢了。` + rank.map((x, i) => `第${i + 1}名${x.name}（${x.out ? '破产' : '总资产¥' + worth(x)}）`).join('，');
+          listHtml = rank.map(x => `<li>${esc(x.name)}：${x.out ? '破产' : '¥' + worth(x)}</li>`).join('');
+        }
+        log(`🏆 ${title}`);
         const t = $u('#mono-turn'); if (t) t.textContent = '游戏结束';
         const box = $u('#mono-act');
         if (box) {
           box.onclick = null;
-          box.innerHTML = `<div class="mono-result"><b>🏆 ${esc(win.name)} 赢了</b><ol>${rank.map(x => `<li>${esc(x.name)}：${x.out ? '破产' : '¥' + worth(x)}</li>`).join('')}</ol></div>
+          box.innerHTML = `<div class="mono-result"><b>🏆 ${esc(title)}</b><ol>${listHtml}</ol></div>
             <button class="btn" data-again>再来一局</button><button class="btn ghost" data-pa="back">返回</button>`;
           $('[data-again]', box).onclick = () => Pet.renderGame('monopoly');
         }
@@ -2835,7 +2937,7 @@ const PetGames = {
           const pl = players[cur];
           if (!pl.out) await turn(pl);
           if (stopped) return;
-          if (players.filter(x => !x.out).length <= 1 || players[0].out) break;
+         if (teams ? aliveTeams().length <= 1 : (players.filter(x => !x.out).length <= 1 || players[0].out)) break;
           cur = (cur + 1) % players.length;
           if (cur === 0) {
             if (++round > MAX) break;
@@ -2858,7 +2960,7 @@ const PetGames = {
       const myPets = () => Pet.list.filter(x => Pet.isMine(x) && Pet.visible(x));
       const petsOf = cid => Pet.list.filter(x => x.owners.includes(cid) && Pet.visible(x));
       const petName = x => `${x.name}（${SPECIES[x.sp].name}）`;
-            const begin = (chars, money, myPet = p, picks = {}) => {
+          const begin = (chars, money, myPet = p, picks = {}, teamList = null) => {
         const sps = Object.keys(SPECIES), items = () => ({ remote: 0, double: 0, free: 0, steal: 0 });
                players = [
           { id: 'user', name: me.name, pet: myPet, money, pos: 0, out: false, skip: 0, color: colorOf(0), items: items(), talent: talentFor(myPet) },
@@ -2870,6 +2972,14 @@ const PetGames = {
             return { id: c.id, name: c.name, pet, money, pos: 0, out: false, skip: 0, color: colorOf(i + 1), greed: 0.3 + Math.random() * 0.6, items: items(), talent: talentFor(pet) };
           }),
         ];
+teams = teamList;
+        if (teams) {
+          const big = Math.max(...teams.map(t => t.ids.length));
+          for (const t of teams) {
+            const b = bonusOf(money, big, t.ids.length);
+            if (b) t.ids.forEach(id => { byId(id).money += b; });
+          }
+        }
         ui.innerHTML = `<div class="mono-bar"><span id="mono-turn"></span>
             <select id="mono-spd" aria-label="速度"><option value="slow">慢</option><option value="mid">中</option><option value="fast">快</option></select></div>
           <div class="pet-acts" id="mono-act"></div>
@@ -2890,7 +3000,8 @@ const PetGames = {
         $u('#mono-in').onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); send(); } };
         log(`游戏开始，${players.length} 个人，每人 ¥${money}`);
         log('宠物天赋：' + players.map(x => `${x.name}${x.talent.i}${x.talent.n}`).join('，'));
-        talk('游戏刚开始，大家打个招呼、放放狠话');
+         if (teams) log('组队：' + teamText());
+        talk(teams ? `游戏刚开始，是组队赛：${teamText()}。队友互相打气，对手之间放放狠话` : '游戏刚开始，大家打个招呼、放放狠话');
         loop();
       };
 
@@ -2922,6 +3033,12 @@ const PetGames = {
           <label class="field" style="flex:1"><span>速度</span><select id="mono-s"><option value="slow">慢</option><option value="mid">中</option><option value="fast">快</option></select></label>
           <label class="field" style="flex:1"><span>难度</span><select id="mono-d"><option value="1.5">简单</option><option value="1" selected>普通</option><option value="0.35">困难</option></select></label>
         </div>
+  <div class="flex" style="gap:8px">
+          <label class="field" style="flex:1"><span>玩法</span><select id="mono-mode"><option value="solo">个人赛</option><option value="team">组队赛</option></select></label>
+          <label class="field" style="flex:1"><span>分几队</span><select id="mono-tn">${[2, 3, 4, 5, 6, 7, 8].map(n => `<option>${n}</option>`).join('')}</select></label>
+          <label class="field" style="flex:1"><span>怎么分</span><select id="mono-how"><option value="random">随机分</option><option value="ai">角色自己选</option></select></label>
+        </div>
+        <p class="hint">「分几队」和「怎么分」只在组队赛里生效。</p>
         <p class="hint">人越多一轮越久，建议人多时选「快」。</p>
         <button class="btn" data-start style="margin-top:8px">开始</button>`;
       $u('#mono-s').value = p.games.monoSpd || 'slow';
@@ -2929,7 +3046,7 @@ const PetGames = {
       const count = () => { $u('#mono-cnt').textContent = `已选 ${boxes().filter(x => x.checked).length} 人`; };
       boxes().forEach(b => { b.onchange = count; });
       $('[data-all]', ui).onclick = () => { const on = !boxes().every(x => x.checked); boxes().forEach(x => { x.checked = on; }); count(); };
-      $('[data-start]', ui).onclick = () => {
+       $('[data-start]', ui).onclick = async () => {
         const ids = boxes().filter(x => x.checked).map(x => x.dataset.mc);
         if (!ids.length) return toast('至少选一个角色');
         MAX = Number($u('#mono-r').value);
@@ -2938,7 +3055,30 @@ const PetGames = {
         spd = SPD[p.games.monoSpd];
         const myPet = Pet.get($u('#mono-me')?.value) || p;
         const picks = Object.fromEntries($$('[data-mp]', ui).map(s => [s.dataset.mp, s.value]));
-        begin(ids.map(charById).filter(Boolean), Number($u('#mono-m').value), myPet, picks);
+        const chars = ids.map(charById).filter(Boolean), money = Number($u('#mono-m').value);
+        if ($u('#mono-mode').value !== 'team') return begin(chars, money, myPet, picks);
+        // 组队赛：队数不能超过总人数
+        const tn = Math.min(Number($u('#mono-tn').value), chars.length + 1), how = $u('#mono-how').value;
+        const nm = id => (id === 'user' ? me.name : charById(id)?.name || '?');
+        const preview = async () => {
+          ui.innerHTML = '<p class="mono-wait">正在分队……</p>';
+          let list = null;
+          if (how === 'ai' && S.settings.claude.key) {
+            try { list = await aiTeams(chars, tn); } catch (e) { Log.add('大富翁分队失败', e.message); }
+            if (!list) toast('没分好，改成随机分');
+          }
+          if (stopped) return;
+          list ||= randomTeams(chars, tn);
+          const big = Math.max(...list.map(t => t.ids.length));
+          ui.innerHTML = `<h3>分队结果</h3><div class="card">${list.map(t => `<div class="row" style="cursor:default">
+              <span>${t.i} ${esc(t.n)}</span><small>${esc(t.ids.map(nm).join('、'))}${t.ids.length < big ? ` · 人少，每人多发 ¥${bonusOf(money, big, t.ids.length)}` : ''}</small></div>`).join('')}</div>
+            ${list.why ? `<p class="hint">💬 ${esc(list.why)}</p>` : ''}
+            <p class="hint">队友之间不收过路费，按全队「人均资产」排名。</p>
+            <div class="pet-acts"><button class="btn" data-go>开始</button><button class="btn ghost" data-re>重新分</button><button class="btn ghost" data-pa="back">返回</button></div>`;
+          $('[data-go]', ui).onclick = () => begin(chars, money, myPet, picks, list);
+          $('[data-re]', ui).onclick = preview;
+        };
+        preview();
       };
       return { stop() { stopped = true; clearInterval(animT); } };
     },

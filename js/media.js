@@ -126,18 +126,24 @@ const Media = {
 
   // 中文描述 → 英文提示词 + 风格词
     async makePrompt(desc, style, ch = null, purpose = 'photo') {
-    const known = IMG_STYLES[style];
+    // 角色填了「原作画风」时，所有图（照片、自拍、截图、头像）都按原作画风画，不加写实风格词
+    const canon = String(ch?.canonStyle || '').trim();
+    const known = canon ? '' : IMG_STYLES[style];
     let main = desc, custom = '';
     if (S.settings.image.translate !== false && S.settings.claude.key) {
       try {
-               const sys = `You write prompts for an image generation model. Turn the Chinese description into ONE line of English, comma-separated visual keywords, under 60 words.
-Describe what is visible: subject, setting, lighting, colors, mood. No text or watermarks.${known ? ' Do not add style words (style is added separately).' : ' A style is given in brackets: end the line with a few English keywords for that style.'}${purpose === 'avatar' ? ' It is a profile picture.' : ''} If the description contains 重点要求, follow it strictly and put the main subject first, stated clearly (e.g. "a capybara"). Output only the prompt.`;
-        const art = ch?.artStyle && !PHOTO_STYLES.includes(style) ? `\n（作者的画风偏好：${ch.artStyle}）` : '';
-        const st = known ? '' : `\n（风格：${style}）`;
-                // 失败重试一次；取第一个有内容的行，去掉 "Prompt:" 之类的前缀
+        const styleRule = canon
+          ? ` The whole picture must be drawn in this art style: "${canon}". All characters look exactly like in the original cartoon/anime/comic, NOT realistic, NOT real animals, NOT real people. The picture type "${style}" only decides framing and content (selfie = the character holds the phone close to the camera; screenshot = a phone screen; casual photo = an everyday scene). End the line with English keywords for that art style.`
+          : known ? ' Do not add style words (style is added separately).' : ' A style is given in brackets: end the line with a few English keywords for that style.';
+        const sys = `You write prompts for an image generation model. Turn the Chinese description into ONE line of English, comma-separated visual keywords, under 60 words.
+Describe what is visible: subject, setting, lighting, colors, mood. No text or watermarks.${styleRule}${purpose === 'avatar' ? ' It is a profile picture.' : ''} If the description contains 重点要求, follow it strictly and put the main subject first, stated clearly (e.g. "a capybara"). Output only the prompt.`;
+        const art = !canon && ch?.artStyle && !PHOTO_STYLES.includes(style) ? `\n（作者的画风偏好：${ch.artStyle}）` : '';
+        const st = known ? '' : `\n（图片类型：${style}）`;
+        const who = canon ? `\n（如果画面里有${ch.name}，按原作里的样子画）` : '';
+        // 失败重试一次；取第一个有内容的行，去掉 "Prompt:" 之类的前缀
         let out = '';
         for (let i = 0; i < 2 && !out; i++) {
-          try { out = await API.claude(sys, [{ role: 'user', content: desc + st + art }], { maxTokens: 300, temperature: 0.5 }); }
+          try { out = await API.claude(sys, [{ role: 'user', content: desc + st + art + who }], { maxTokens: 300, temperature: 0.5 }); }
           catch (e) { if (i === 1) throw e; await sleep(1500); }
         }
         const line = out.split('\n').map(s => s.trim()).find(s => s && !/^(here|prompt)\b.*:$/i.test(s)) || '';
@@ -145,8 +151,13 @@ Describe what is visible: subject, setting, lighting, colors, mood. No text or w
       } catch (e) {
         Log.add('生图提示词改写失败，改用原描述', e.message);
       }
-    } else if (!known) custom = IMG_STYLES.随拍; // 没法翻译时退回随拍
-    return [main, known || custom, purpose === 'avatar' ? AVATAR_EN : ''].filter(Boolean).join(', ');
+    } else if (!known && !canon) custom = IMG_STYLES.随拍; // 没法翻译时退回随拍
+    return [
+      main,
+      canon || known || custom,
+      canon ? 'not photorealistic, no real animals, no real people' : '',
+      purpose === 'avatar' ? AVATAR_EN : '',
+    ].filter(Boolean).join(', ');
   },
 
   // ===== 生图 =====

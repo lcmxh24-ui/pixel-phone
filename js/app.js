@@ -488,6 +488,7 @@ Views.charEdit = async ({ id }) => {
       <label class="field"><span>头像链接</span><input data-k="avatar" value="${esc(c.avatar)}" placeholder="https://..." autocapitalize="off"></label>
       <label class="field"><span>角色设定</span><textarea data-k="persona" rows="10" placeholder="性格、背景、说话习惯……">${esc(c.persona)}</textarea></label>
       <label class="field"><span>画风偏好（会画画才填，不填就只拍照）</span><input data-k="artStyle" value="${esc(c.artStyle || '')}" placeholder="比如：擅长水彩，偶尔画国画"></label>
+      <label class="field"><span>原作画风（同人角色才填，填了之后发的所有图都按这个画风画，不再是写实照片）</span><textarea data-k="canonStyle" rows="3" placeholder="建议写英文，比如：We Bare Bears cartoon style, Cartoon Network 2D animation, flat colors, thick clean outlines">${esc(c.canonStyle || '')}</textarea></label>
     </div>
     <div class="card">
       <div class="row"><span>所在地</span><span>${c.city ? `${esc(c.city)} · ${esc(c.tz)}` : '和你同城'}</span></div>
