@@ -223,21 +223,23 @@ const Prompt = {
     for (const r of Reading.rooms) if (r.personaId === pid && r.members.includes(charId)) ids.push(Conv.r(r.id));
     for (const c of S.chars) if (c.id !== charId) ids.push(Conv.cc(pid, charId, c.id));
     const since = Date.now() - 24 * 3600e3, out = [];
-    for (const id of ids) {
-      if (id === exclude) continue;
-      const ms = (await getMsgs(id)).filter(m => m.ts > since).slice(-perConv);
-            for (const m of ms) out.push({ ts: m.ts, t: `[${Conv.label(id, pid)} ${ChatUI.timeLabel(m.ts)}] ${this.line(m, pid)}` });
-    }
+   for (const id of ids) {
+    if (id === exclude) continue;
+    const ms = (await getMsgs(id))
+      .filter(m => m.ts > since && !(hideOffline && (m.type === 'offline' || m.sceneOf)))
+      .slice(-perConv);
+    for (const m of ms) out.push({ ts: m.ts, t: `[${Conv.label(id, pid)} ${ChatUI.timeLabel(m.ts)}] ${this.line(m, pid)}` });
+  }
     out.push(...await Moments.contextLines(charId, pid, since));
     out.push(...Pet.contextLines(charId, pid));
     return out;
   },
 
-  async recentMulti(chars, pid, exclude, max = 15) {
-    const seen = new Set(), all = [];
-    for (const c of chars) for (const x of await this.recentLines(c.id, pid, exclude, 4)) if (!seen.has(x.t)) { seen.add(x.t); all.push(x); }
-    return all.sort((a, b) => a.ts - b.ts).slice(-max).map(x => x.t).join('\n');
-  },
+  async recentMulti(chars, pid, exclude, max = 15, opts = {}) {
+  const seen = new Set(), all = [];
+  for (const c of chars) for (const x of await this.recentLines(c.id, pid, exclude, 4, opts)) if (!seen.has(x.t)) { seen.add(x.t); all.push(x); }
+  return all.sort((a, b) => a.ts - b.ts).slice(-max).map(x => x.t).join('\n');
+},
 
   knownList(charId, pid) {
   return S.chars.filter(c => c.id !== charId && knows(charId, c.id, pid))
@@ -362,7 +364,11 @@ const Prompt = {
     const vars = {
       ...this.baseVars(pid, now),
       角色: ch.name, char: ch.name, 角色设定: ch.persona || '', char_persona: ch.persona || '',
-      记忆: await Memory.retrieveText(ch.id, pid, query, ch.name, { conv: convId, since: hist[0]?.ts }),
+      记忆: await Memory.retrieveText(ch.id, pid, query, ch.name, {
+  conv: convId,
+  since: hist[0]?.ts,
+  scenes: new Set(hist.filter(m => m.scene).map(m => 'offline:' + m.scene)),
+}),
       近况: (await this.recentLines(ch.id, pid, convId)).sort((a, b) => a.ts - b.ts).slice(-6).map(x => x.t).join('\n'),
       关系: [rel.desc ? `${ch.name}和${p.name}：${rel.desc}` : '', known ? `${ch.name}认识的人：${known}` : '',
         rel.theyBlock ? `${ch.name}已经把${p.name}拉黑了` : '',
@@ -420,7 +426,7 @@ const Prompt = {
             成员设定: '（以下是写手的参考资料。成员之间不知道彼此设定的原文，只知道自己相处中看到的。）\n'
         + members.map(c => `· ${c.name}：${c.persona || '（无）'}`).join('\n\n'),
       记忆: mem.join('\n\n'), 关系: this.relationsText(members, pid),
-      近况: await this.recentMulti(members, pid, convId),
+      近况: await this.recentMulti(members, pid, convId, 15, { hideOffline: true }),
       世界书: wb.constant, 世界书触发: wb.triggered,
       所在地: await Geo.placeText(members, pid, now),
       间隔: all.length ? gapText(now - all.at(-1).ts) : '很久',
@@ -431,6 +437,7 @@ const Prompt = {
 - 名字只能是：${names.join('、')}。绝对不要替{{用户}}发言。
 - 由你判断谁会说话：被@的人优先回应；和话题相关、性格活跃的人更可能开口；不是每个人都要说话，也可以有人连发几条。一共 1 到 8 条。
 - 注意信息差：每个人只知道自己参与过的聊天和自己的记忆，不知道别人私聊的内容。
+- 【最近在别处的聊天】每条都标了出处，只有参与那段聊天的人知道；【某某记得的事】只有某某自己知道。其他人不能提起、暗示或接这些话，除非当事人在群里自己说出来。
 - 发语音：名字：[语音]语音里说的话
 ${Media.rules(true, p.name)}
 ${Lang.groupRule(members, p)}

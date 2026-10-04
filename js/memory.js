@@ -79,7 +79,9 @@ const Memory = {
       async retrieve(charId, personaId, query, skip = null) {
     const cfg = S.settings.memory;
     // 来自当前会话、而且对应的聊天原文还在窗口里的记忆，跳过，避免和聊天记录重复
-    const inWindow = m => skip?.since && m.source === skip.conv && m.at && m.at >= skip.since;
+    // 来自当前会话、或来自窗口里那几段线下剧情的记忆，原文还在聊天记录里，跳过
+const inWindow = m => skip?.since && m.at && m.at >= skip.since
+  && (m.source === skip.conv || skip.scenes?.has(m.source));
     const mems = (await DB.byIndex('mems', 'charId', charId))
       .filter(m => m.personaId === personaId && !inWindow(m));
     const imp = mems.filter(m => m.level === 'important')
@@ -207,8 +209,7 @@ const Memory = {
       for (const c of chars) {
         const arr = Array.isArray(obj) ? (chars.length === 1 ? obj : []) : (obj[c.name] || []);
         for (const it of arr) {
-          if (!it?.text) continue;
-                    await this.add(c.id, info.pid, it.text, it.level === 'important' ? 'important' : 'normal', convId, msgs.at(-1).ts);
+         if (it?.text) await Memory.add(c.id, pid, it.text, it.level === 'important' ? 'important' : 'normal', 'offline:' + scene, ts);
           total++;
         }
       }
