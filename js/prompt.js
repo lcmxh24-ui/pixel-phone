@@ -362,8 +362,8 @@ const Prompt = {
     const vars = {
       ...this.baseVars(pid, now),
       角色: ch.name, char: ch.name, 角色设定: ch.persona || '', char_persona: ch.persona || '',
-      记忆: await Memory.retrieveText(ch.id, pid, query, ch.name),
-            近况: (await this.recentLines(ch.id, pid, convId)).sort((a, b) => a.ts - b.ts).slice(-6).map(x => x.t).join('\n'),
+      记忆: await Memory.retrieveText(ch.id, pid, query, ch.name, { conv: convId, since: hist[0]?.ts }),
+      近况: (await this.recentLines(ch.id, pid, convId)).sort((a, b) => a.ts - b.ts).slice(-6).map(x => x.t).join('\n'),
       关系: [rel.desc ? `${ch.name}和${p.name}：${rel.desc}` : '', known ? `${ch.name}认识的人：${known}` : '',
         rel.theyBlock ? `${ch.name}已经把${p.name}拉黑了` : '',
         rel.iBlock ? `${p.name}把${ch.name}拉黑了，${ch.name}知道` : ''].filter(Boolean).join('\n'),
@@ -412,7 +412,7 @@ const Prompt = {
     const hist = this.window(all);
        const query = hist.slice(-6).filter(m => m.sender === 'user' || m.type === 'text').slice(-4).map(m => m.content).join('\n') || hint;
     const mem = [];
-    for (const c of members) { const t = await Memory.retrieveText(c.id, pid, query, c.name); if (t) mem.push(t); }
+        for (const c of members) { const t = await Memory.retrieveText(c.id, pid, query, c.name, { conv: convId, since: hist[0]?.ts }); if (t) mem.push(t); }
     const wb = WB.build(g.members, WB.scan(all));
     const vars = {
       ...this.baseVars(pid, now),

@@ -76,9 +76,12 @@ const Memory = {
     await DB.put('mems', m);
   },
 
-    async retrieve(charId, personaId, query) {
+      async retrieve(charId, personaId, query, skip = null) {
     const cfg = S.settings.memory;
-    const mems = (await DB.byIndex('mems', 'charId', charId)).filter(m => m.personaId === personaId);
+    // 来自当前会话、而且对应的聊天原文还在窗口里的记忆，跳过，避免和聊天记录重复
+    const inWindow = m => skip?.since && m.source === skip.conv && m.at && m.at >= skip.since;
+    const mems = (await DB.byIndex('mems', 'charId', charId))
+      .filter(m => m.personaId === personaId && !inWindow(m));
     const imp = mems.filter(m => m.level === 'important')
       .sort((a, b) => b.ts - a.ts).slice(0, Number(cfg.importantCap));
     // 只有最近几条重要记忆常驻，更早的重要记忆和普通记忆一起按相关度召回
@@ -107,8 +110,8 @@ const Memory = {
     return { important, normal: picked };
   },
 
-   async retrieveText(charId, personaId, query, title = '') {
-    const { important, normal } = await this.retrieve(charId, personaId, query);
+     async retrieveText(charId, personaId, query, title = '', skip = null) {
+    const { important, normal } = await this.retrieve(charId, personaId, query, skip);
     if (!important.length && !normal.length) return '';
     const fmt = m => `- [${new Date(m.at || m.ts).toLocaleDateString('zh-CN')}] ${m.text}`;
     const out = [];
