@@ -2921,7 +2921,7 @@ recall && `【${me.name}刚才这句话让人想起的事（只有本人知道�
         const fs = foes(pl).filter(o => !spare(o) && (o === foeNow || !o.items.guard || Math.random() < 0.3));
         if (pl.items.swap) {
           const t = [...fs].sort((a, b) => danger(a.pos, pl) - danger(b.pos, pl))[0];
-          if (t && danger(pl.pos, pl) - danger(t.pos, pl) > 200) return { k: 'swap', tg: t };
+          if (t && danger(pl.pos, pl) - danger(t.pos, pl) > (diff < 1 ? 120 : 200)) return { k: 'swap', tg: t };
         }
         // 有较劲的先对他，没有就打领先的人；态度是负的人更容易被选中
         const score = o => worth(o) * (1 - (pl.bias[o.id] || 0) * 0.15);
@@ -2935,6 +2935,13 @@ recall && `【${me.name}刚才这句话让人想起的事（只有本人知道�
         const here = tiles[pl.pos];
         if (pl.items.banana && !here.trap && pl.pos !== 0 && (here.owner === pl.id || Math.random() < 0.4)) return { k: 'banana' };
         return null;
+      };
+  // 角色逛道具店：困难模式会挑自己缺的买，其他难度随便买
+      const aiShop = (pl, can) => {
+        if (pl.money < 700 * diff || Math.random() > pl.greed + (diff < 1 ? 0.3 : 0)) return null;
+        if (diff >= 1) return pick(can)[0];
+        const want = ['guard', 'wreck', 'nap', 'free', 'remote', 'swap', 'snail', 'banana', 'double', 'steal'];
+        return want.find(k => !pl.items[k] && can.some(([x]) => x === k)) || null;
       };
       // 掷骰子（含飞毛腿）
       const rollDice = async (pl, two) => {
@@ -3137,7 +3144,7 @@ annoy(o, pl, 2);
           if (!can.length) return log(`${pl.name}逛了逛道具店，什么都买不起`, pl);
           const k = mine
             ? await ask([...can.map(([k, v]) => ({ label: `买${v.i}${v.n}（¥${v.price}）`, value: k })), { label: '不买', value: null }])
-                       : pl.money > 700 * diff && Math.random() < pl.greed ? pick(can)[0] : null;
+                       : aiShop(pl, can);
           if (stopped) return;
           if (!k) return log(`${pl.name}在道具店逛了一圈，没买`, pl);
           pl.money -= ITEMS[k].price; pl.items[k]++;
@@ -3220,7 +3227,7 @@ annoy(o, pl, 2);
           if (pl.money >= REROLL + 50 && !stopped) {
             const again = pl.id === 'user'
               ? await ask([{ label: `就走 ${n} 步 → ${dest().n}${rentAhead() ? `（过路费 ¥${rentAhead()}）` : ''}`, value: false }, { label: `花 ¥${REROLL} 重掷一次`, value: true }])
-              : rentAhead() >= 100 && pl.money > 300;
+             : rentAhead() >= (diff < 1 ? 50 : diff > 1 ? 150 : 100) && pl.money > (diff < 1 ? 150 : 300);
             if (stopped) return;
             if (again) { pay(pl, null, REROLL); log(`${pl.name}花 ¥${REROLL} 重掷了一次`, pl); await W8(400); n = await rollDice(pl, two); }
           }
