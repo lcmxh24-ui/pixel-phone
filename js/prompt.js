@@ -309,14 +309,13 @@ const Prompt = {
     const ids = chars.map(c => c.id), names = chars.map(c => c.name), multi = chars.length > 1;
     const before = (await getMsgs(convId)).filter(m => m.ts <= ts).slice(-30);
     const query = [hint, ...before.slice(-6).map(m => m.content)].join('\n');
-    const mem = [];
-    for (const c of chars) { const t = await Memory.retrieveText(c.id, pid, query, c.name); if (t) mem.push(t); }
+    const memText = await Memory.retrieveMultiText(chars, pid, query);
     const wb = WB.build(ids, WB.scan(before) + '\n' + hint);
     const vars = {
       ...this.baseVars(pid, ts),
       角色: names.join('、'), char: names.join('、'),
       角色设定: multi ? chars.map(c => `· ${c.name}：${c.persona || '（无）'}`).join('\n\n') : (chars[0].persona || ''),
-      记忆: mem.join('\n\n'),
+      记忆: memText,
       关系: this.relationsText(chars, pid),
       世界书: wb.constant, 世界书触发: wb.triggered,
     };
@@ -423,15 +422,14 @@ const Prompt = {
     const all = await getMsgs(convId);
     const hist = this.window(all);
        const query = hist.slice(-6).filter(m => m.sender === 'user' || m.type === 'text').slice(-4).map(m => m.content).join('\n') || hint;
-    const mem = [];
-        for (const c of members) { const t = await Memory.retrieveText(c.id, pid, query, c.name, { conv: convId, since: hist[0]?.ts }); if (t) mem.push(t); }
+    const memText = await Memory.retrieveMultiText(members, pid, query, { conv: convId, since: hist[0]?.ts });
     const wb = WB.build(g.members, WB.scan(all));
     const vars = {
       ...this.baseVars(pid, now),
       群名: g.name, 成员名单: names.join('、'), 角色: names.join('、'),
             成员设定: '（以下是写手的参考资料。成员之间不知道彼此设定的原文，只知道自己相处中看到的。）\n'
         + members.map(c => `· ${c.name}：${c.persona || '（无）'}`).join('\n\n'),
-      记忆: mem.join('\n\n'), 关系: this.relationsText(members, pid),
+      记忆: memText, 关系: this.relationsText(members, pid),
       近况: await this.recentMulti(members, pid, convId, 15, { hideOffline: true }),
       世界书: wb.constant, 世界书触发: wb.triggered,
       所在地: await Geo.placeText(members, pid, now),
@@ -444,7 +442,7 @@ const Prompt = {
 - 由你判断谁会说话：被@的人优先回应；和话题相关、性格活跃的人更可能开口；不是每个人都要说话，也可以有人连发几条。一共 1 到 8 条。
 - 不要总是固定那两三个人在聊。话题热闹、大家都醒着的时候，通常会有好几个人冒出来说一两句，话少的人也会偶尔回个表情、接个梗或者简短附和。
 - 注意信息差：每个人只知道自己参与过的聊天和自己的记忆，不知道别人私聊的内容。
-- 【最近在别处的聊天】每条都标了出处，只有参与那段聊天的人知道；【某某记得的事】只有某某自己知道。其他人不能提起、暗示或接这些话，除非当事人在群里自己说出来。
+- 【最近在别处的聊天】每条都标了出处，只有参与那段聊天的人知道；记忆里每条后面标了谁记得，只有标出来的人知道。其他人不能提起、暗示或接这些话，除非当事人在群里自己说出来。
 - 发语音：名字：[语音]语音里说的话
 ${Media.rules(true, p.name)}
 ${Lang.groupRule(members, p)}
@@ -505,9 +503,9 @@ ${GroupAdmin.rules(g, members)}`;
       st.push(`【${c.name}的设定】\n${c.persona || '（无）'}`);
       const r = getRel(pid, c.id);
       if (r.know) st.push(`${c.name}认识${p.name}${r.desc ? '：' + r.desc : ''}`);
-      const mem = await Memory.retrieveText(c.id, pid, query, c.name, { conv: convId, since: hist[0]?.ts });
-      if (mem) dy.push(mem);
     }
+const mem = await Memory.retrieveMultiText([x, y], pid, query, { conv: convId, since: hist[0]?.ts });
+    if (mem) dy.push(mem);
     st.push(`（上面两人的设定是写手的参考资料。${x.name}和${y.name}不知道对方设定的原文，只知道相处中了解到的。）`);
     if (knows(pid, x.id) || knows(pid, y.id)) st.push(`【${p.name}的设定】\n${p.persona || '（无）'}`);
     const wb = WB.build([x.id, y.id], WB.scan(hist) + '\n' + reason);

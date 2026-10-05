@@ -139,8 +139,48 @@ const inWindow = m => skip?.since && m.at && m.at >= skip.since
     out.push(`（这些是${title}脑子里的背景，用来保持前后一致，不是要说的话题。真人聊天很少主动翻旧账：只有当前话题直接碰到、或者确实好笑/有意义时才自然带一句，一段对话里最多一次，大多数时候一句都不提。不要为了显得"记得"而提。时间标得模糊的是很久以前的事，细节可能记不清，真提到时语气也要带点不确定。）`);
     return out.join('\n\n');
   },
-
-  parseJSON(text) {
+// 多人一起用：每人各查各的，同一批聊天里总结出来、内容相近的合并成一条，标上谁记得
+  async retrieveMultiText(chars, pid, query, skip = null) {
+    if (chars.length === 1) return this.retrieveText(chars[0].id, pid, query, chars[0].name, skip);
+    const list = [];
+    for (const c of chars) {
+      const r = await this.retrieve(c.id, pid, query, skip);
+      for (const m of [...r.important, ...r.normal]) {
+        const v = this.localVec(m.text);
+        // 来源相同、时间相同、文字相似度够高，就算同一件事
+        const same = list.find(g => !g.names.includes(c.name)
+          && g.m.source === m.source && (g.m.at || g.m.ts) === (m.at || m.ts)
+          && this.cos(g.v, v) >= 0.6);
+        if (same) {
+          same.names.push(c.name);
+          if (m.level === 'important') same.imp = true;
+        } else {
+          list.push({ m, v, names: [c.name], imp: m.level === 'important' });
+        }
+      }
+    }
+    if (!list.length) return '';
+    const when = m => {
+      const t = m.at || m.ts, d = new Date(t), now = new Date();
+      const days = (now - t) / 864e5;
+      if (m.level === 'important' || days < 30) return d.toLocaleDateString('zh-CN');
+      if (days < 180) return `大约${Math.max(1, Math.round(days / 30))}个月前`;
+      const season = ['冬', '冬', '春', '春', '春', '夏', '夏', '夏', '秋', '秋', '秋', '冬'][d.getMonth()];
+      const dy = now.getFullYear() - d.getFullYear();
+      if (dy === 0) return `今年${season}天`;
+      if (dy === 1) return `去年${season}天`;
+      return `${d.getFullYear()}年左右`;
+    };
+    const who = g => g.names.length > 1 ? `${g.names.join('、')}都记得` : `只有${g.names[0]}记得`;
+    const fmt = g => `- [${when(g.m)}] ${g.m.text}（${who(g)}）`;
+    const byTime = (a, b) => (a.m.at || a.m.ts) - (b.m.at || b.m.ts);
+    const imp = list.filter(g => g.imp).sort(byTime), nor = list.filter(g => !g.imp).sort(byTime);
+    const out = [];
+    if (imp.length) out.push('【大家记得的事】\n' + imp.map(fmt).join('\n'));
+    if (nor.length) out.push('【可能会联想到的旧事】\n' + nor.map(fmt).join('\n'));
+    out.push('（这些是各人脑子里的背景，每条后面标了谁记得，没标到的人不知道这件事。用来保持前后一致，不是要说的话题。真人聊天很少主动翻旧账：只有当前话题直接碰到、或者确实好笑/有意义时才自然带一句，一段对话里最多一次，大多数时候一句都不提。时间标得模糊的是很久以前的事，细节可能记不清。）');
+    return out.join('\n\n');
+  },  parseJSON(text) {
     const o = text.match(/{[\s\S]*}/), a = text.match(/\[[\s\S]*\]/);
     for (const s of [o?.[0], a?.[0]]) { if (!s) continue; try { return JSON.parse(s); } catch { /* 试下一个 */ } }
     throw new Error('总结结果不是有效 JSON（可能输出被截断）');

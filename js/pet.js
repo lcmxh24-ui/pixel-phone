@@ -2298,7 +2298,7 @@ const PetGames = {
      // ===== 大富翁：人数不限，棋子是各自的宠物，可以边玩边聊 =====
   monopoly: {
     name: '大富翁', w: 360, h: 360,
-    tip: '和认识的角色一起玩，人数不限，棋子是大家的宠物，每只宠物有天赋。经过起点 +¥200，集齐同色一组过路费翻倍，踩到自己的地可以升级。每 3 轮有一次全场事件。下面可以和大家聊天。',
+    tip: '和认识的角色一起玩，人数不限，棋子是大家的宠物，每只宠物有天赋。经过起点 +¥200 并抽一张卡牌，集齐同色一组过路费翻倍，踩到自己的地可以升级。掷骰前可以出一张卡牌干扰对手（催眠、蜗牛、交换、拆迁、香蕉皮），掷完不满意可以花 ¥40 重掷。每 3 轮有一次全场事件。下面可以和大家聊天。',
     // 32 格，四个角在 0 / 8 / 16 / 24
     TILES: [
       { n: '起点', k: 'start', i: '🏁' }, { n: '草莓田', g: 0, price: 60, i: '🍓' }, { n: '胡萝卜地', g: 0, price: 70, i: '🥕' },
@@ -2315,9 +2315,16 @@ const PetGames = {
       { n: '传送门', k: 'portal', i: '🌀' }, { n: '豪华猫窝', g: 5, price: 350, i: '👑' },
     ],
     GROUPS: ['#f08a9a', '#f0a040', '#6ab0e8', '#5fbf6a', '#f0c040', '#a07ad8'],
-    ITEMS: {
+   ITEMS: {
       remote: { n: '遥控骰子', i: '🎮', price: 90 }, double: { n: '双骰卡', i: '🎲', price: 60 },
       free: { n: '免租卡', i: '🛡️', price: 80 }, steal: { n: '抢地卡', i: '🃏', price: 150 },
+      // 下面是卡牌。card: 'target' 要选一个对手，'trap' 放在脚下，没有 card 的是被动生效
+      nap: { n: '催眠卡', i: '💤', price: 120, card: 'target', d: '对手下回合睡过去' },
+      snail: { n: '蜗牛卡', i: '🐌', price: 60, card: 'target', d: '对手下次最多走 3 步' },
+      swap: { n: '交换卡', i: '🔄', price: 100, card: 'target', d: '和对手交换位置' },
+      wreck: { n: '拆迁卡', i: '🚧', price: 130, card: 'target', d: '拆对手一级房子，没房子就赔你 ¥50' },
+      banana: { n: '香蕉皮', i: '🍌', price: 50, card: 'trap', d: '扔在脚下，别人经过会滑倒停下，赔你 ¥60' },
+      guard: { n: '护盾', i: '🪞', price: 70, d: '自动挡下一次别人对你出的牌' },
     },
     TALENTS: [
       { k: 'rich', n: '招财', i: '💰', d: '经过起点多拿 ¥80' },
@@ -2366,6 +2373,8 @@ const PetGames = {
       let diff = 1; // 简单 1.5，普通 1，困难 0.35
       // ===== 组队 =====
       let teams = null; // 组队赛时是 [{ n: 队名, i: 图标, ids: [玩家ID...] }]，个人赛是 null
+ let talkCtx = ''; // 开局读到的最近聊天，整局固定不变，放进系统提示词，缓存才能一直命中
+  let memCtx = {}; // 开局召回的每个角色的记忆，整局固定不变
       const TEAM_N = [['红队', '🔴'], ['蓝队', '🔵'], ['绿队', '🟢'], ['黄队', '🟡'], ['紫队', '🟣'], ['橙队', '🟠'], ['白队', '⚪'], ['黑队', '⚫']];
       const TEAM_C = ['#e04a3a', '#3a7ae0', '#3aa050', '#e0b828', '#9a50c8', '#f08a20', '#a0a0a0', '#303030'];
       const mkTeam = i => ({ n: TEAM_N[i]?.[0] || `${i + 1}队`, i: TEAM_N[i]?.[1] || '🏳️', c: TEAM_C[i] || `hsl(${i * 67 % 360},60%,50%)`, ids: [] });
@@ -2406,6 +2415,113 @@ const PetGames = {
           if (t) out.push(`【${a.name}和${b.name}的私聊】\n${t}`);
         }
         return out.join('\n\n').slice(-5000); // 太长就只留最近的，控制费用
+      };
+// 开局调用一次 AI：按性格、关系、记忆和聊天，定每个角色的性格底色和对每个人的态度
+      const aiStance = async chars => {
+        const names = chars.map(c => c.name), all = [me.name, ...names];
+        const pairs = [];
+        for (let i = 0; i < chars.length; i++) for (let j = i + 1; j < chars.length; j++) {
+          const a = chars[i], b = chars[j];
+          pairs.push(`${a.name} 和 ${b.name}：${knows(a.id, b.id, pid) ? (getRel(a.id, b.id, pid).desc || '认识') : '不认识'}`);
+        }
+        const system = [
+          `${me.name}约了${names.join('、')}一起玩宠物大富翁。你要判断每个角色在这局里会怎么对待其他人。`,
+          `【${me.name}的设定】\n${(me.persona || '（无）').slice(0, 400)}`,
+          ...chars.map(c => `【${c.name}】\n${(c.persona || '（无）').slice(0, 600)}\n和${me.name}的关系：${getRel(pid, c.id).desc || '认识'}`),
+          pairs.length && `【角色之间的关系】\n${pairs.join('\n')}`,
+          ...chars.map(c => memCtx[c.id]).filter(Boolean),
+          talkCtx && `【最近的聊天记录】\n${talkCtx}`,
+          `【怎么判断】
+- 先看这个人本身：好胜还是随和，嘴硬还是直接，心软还是较真。这决定他打牌的底色。
+- 再看他和每个人真实的相处模式：最近关系有什么变化，有没有没说开的事、在意对方却不好意思、刚闹过别扭、互相较劲惯了、一直照顾对方，等等。这些大多和游戏无关，但会影响他玩的时候对谁手下留情、对谁不客气。
+- 不要套刻板印象：关系好不等于放水，好胜的人可能偏要赢最熟的人；关系一般也不等于针对。铁面无私的人也可能有一两个例外，心软的人也会有不想让的人。
+- 没有明显理由就写 0，别硬编。
+
+【输出格式】
+每个角色先写一行：名字｜胜负心：0到10｜心软：0到10｜心态：一句话（20 字以内）
+再对其他每个人各写一行：名字→对象：-3到3的整数｜原因（15 字以内）
+正数是想手下留情，负数是想针对，0 是没特别想法。对象只能是 ${all.join('、')}。`,
+        ].filter(Boolean).join('\n\n');
+        const out = await API.claude(system, [{ role: 'user', content: '开始' }], { maxTokens: 200 + chars.length * 120 });
+        const plNames = players.map(x => x.name);
+        const find = nm => { const n = Prompt.matchName(plNames, nm); return n ? players.find(x => x.name === n) : null; };
+        const num = (s, re, lo, hi) => { const m = s.match(re); return m ? Math.max(lo, Math.min(hi, Number(m[1]))) : null; };
+        for (const raw of out.split('\n')) {
+          const line = raw.trim().replace(/^[*\-•]\s*/, '');
+          const rel = line.match(/^(.+?)\s*(?:→|->|>)\s*(.+?)\s*[:：]\s*([+-]?\d)\s*(?:[|｜]\s*(.*))?$/);
+          if (rel) {
+            const pl = find(rel[1]), to = find(rel[2]);
+            if (!pl || !to || pl === to || pl.id === 'user') continue;
+            pl.bias[to.id] = Math.max(-3, Math.min(3, Number(rel[3])));
+            if (rel[4]) pl.why[to.id] = rel[4].replace(/^原因\s*[:：]\s*/, '').slice(0, 30);
+            continue;
+          }
+          if (!/胜负心|心软/.test(line)) continue;
+          const pl = find(line.split(/[|｜]/)[0]);
+          if (!pl || pl.id === 'user') continue;
+          pl.comp = num(line, /胜负心\s*[:：]\s*(\d+)/, 0, 10) ?? pl.comp;
+          pl.heart = num(line, /心软\s*[:：]\s*(\d+)/, 0, 10) ?? pl.heart;
+          const md = line.match(/心态\s*[:：]\s*(.+)$/);
+          if (md) pl.mood = md[1].trim().slice(0, 20);
+        }
+        players.forEach(refresh);
+      };
+      // 按态度分算出现在最想针对谁（≤-2）、最想放水给谁（≥2）
+      const refresh = pl => {
+        if (!pl.bias) return;
+        const e = Object.entries(pl.bias).filter(([id]) => byId(id) && !byId(id).out);
+        const lo = e.filter(([id, v]) => v <= -2 && !sameTeam(pl, byId(id))).sort((a, b) => a[1] - b[1])[0];
+        const hi = e.filter(([, v]) => v >= 2).sort((a, b) => b[1] - a[1])[0];
+        pl.foe = lo ? lo[0] : null;
+        pl.soft = hi ? hi[0] : null;
+      };
+      // 态度变化，跨过门槛时写动态
+      const shift = (pl, to, d, why = '') => {
+        if (!pl?.bias || !to || pl === to || pl.id === 'user') return;
+        const old = pl.bias[to.id] || 0, v = Math.max(-3, Math.min(3, old + d));
+        if (v === old) return;
+        pl.bias[to.id] = v;
+        if (why) pl.why[to.id] = why.slice(0, 30);
+        refresh(pl);
+        const r = why ? `（${why}）` : '';
+        if (v <= -2 && old > -2 && !sameTeam(pl, to)) { log(`😤 ${pl.name}跟${to.name}杠上了${r}`, pl); react(`${pl.name}决定这局跟${to.name}较劲${r}`, pl.id); }
+        else if (v > -2 && old <= -2) log(`🕊️ ${pl.name}不跟${to.name}计较了${r}`, pl);
+        else if (v >= 2 && old < 2) log(`🤝 ${pl.name}打算对${to.name}手下留情${r}`, pl);
+        else if (v < 2 && old >= 2) log(`😼 ${pl.name}不打算再让着${to.name}了${r}`, pl);
+      };
+      // 记仇：被惹到攒怨气。好胜的人攒得快，心软的人攒得慢；对在意的人更不容易生气
+      const annoy = (pl, by, n) => {
+        if (!pl?.bias || !by || pl === by || pl.id === 'user' || !n || sameTeam(pl, by)) return;
+        const b = pl.bias[by.id] || 0;
+        n *= (0.6 + pl.comp / 10) * (1.3 - pl.heart / 10) * (b > 0 ? 0.6 : 1);
+        pl.grudge[by.id] = (pl.grudge[by.id] || 0) + n;
+        if (pl.grudge[by.id] >= 3) { pl.grudge[by.id] = 0; shift(pl, by, -1, '被惹急了'); }
+      };
+      // 每轮：心软的人慢慢消气，偶尔主动和好
+      const cool = () => players.forEach(pl => {
+        if (!pl.bias || pl.out) return;
+        for (const k in pl.grudge) pl.grudge[k] *= 1 - pl.heart * 0.05;
+        const foe = byId(pl.foe);
+        if (foe && Math.random() < pl.heart * 0.02) shift(pl, foe, 1, '气消了一点');
+      });
+      // 现在每个角色的态度，给聊天用
+      const stanceText = () => players.slice(1).filter(x => !x.out && x.bias).map(x => {
+        const rel = Object.entries(x.bias).filter(([, v]) => v).map(([id, v]) =>
+          `${v > 0 ? '想让着' : '想针对'}${byId(id)?.name}${x.why[id] ? '（' + x.why[id] + '）' : ''}`).join('，');
+        return `${x.name}${x.mood ? `「${x.mood}」` : ''}${rel ? '：' + rel : ''}`;
+      }).join('；');
+      // 你在聊天框说话时，用这句话去召回记忆（开局已经放进去的不重复）
+      const recallFor = async (cs, text) => {
+        const list = [...cs].sort((a, b) => (text.includes(b.name) ? 1 : 0) - (text.includes(a.name) ? 1 : 0)).slice(0, 4);
+        const out = [];
+        for (const c of list) {
+          try {
+            const { normal } = await Memory.retrieve(c.id, pid, text);
+            const ls = normal.filter(m => !(memCtx[c.id] || '').includes(m.text)).slice(-3).map(m => '- ' + m.text);
+            if (ls.length) out.push(`${c.name}想起的事：\n${ls.join('\n')}`);
+          } catch (e) { Log.add('大富翁召回记忆失败', e.message); }
+        }
+        return out.join('\n');
       };
       // 角色自己选：按设定、世界书、彼此关系和聊天记录分队，解析不出来返回 null
       const aiTeams = async (chars, tn) => {
@@ -2531,7 +2647,7 @@ const PetGames = {
           badge(cx + 6, cy + rh / 2, Math.min(6, rh / 2 - 1), pl);
           ctx.fillStyle = C.text; ctx.font = `${fs}px sans-serif`;
           const it = Object.entries(pl.items).filter(([, v]) => v).map(([k, v]) => ITEMS[k].i + (v > 1 ? v : '')).join('');
-          ctx.fillText(`${teamOf(pl)?.i || ''}${pl.talent.i}${pl.name.slice(0, cols > 1 ? 3 : 5)} ¥${pl.money}${pl.out ? ' 破产' : pl.skip ? ' 🏥' : ''}${cols > 1 ? '' : ' ' + it}`,
+          ctx.fillText(`${teamOf(pl)?.i || ''}${pl.talent.i}${pl.name.slice(0, cols > 1 ? 3 : 5)} ¥${pl.money}${pl.out ? ' 破产' : pl.skip ? ' 🏥' : ''}${pl.nap ? '💤' : ''}${pl.snail ? '🐌' : ''}${cols > 1 ? '' : ' ' + it}`,
             cx + 12, cy + rh / 2 + fs / 2 - 2);
           ctx.globalAlpha = 1;
         });
@@ -2549,6 +2665,7 @@ const PetGames = {
           ctx.fillText(t.n.slice(0, 4), x + S / 2, y + (t.g != null ? 16 : 12));
           ctx.font = corner ? '18px sans-serif' : '14px sans-serif';
           ctx.fillText(t.i, x + S / 2, y + 30);
+ if (t.trap) { ctx.font = '10px sans-serif'; ctx.fillText('🍌', x + S - 8, y + 13); }
           if (t.price) {
             if (t.lv === 3) { ctx.font = '10px sans-serif'; ctx.fillText('🏰', x + S / 2, y + S - 3); }
             else if (t.lv) for (let k = 0; k < t.lv; k++) house(x + S / 2 - t.lv * 5 + k * 10 + 1, y + S - 10, '#3aa050');
@@ -2647,7 +2764,7 @@ const PetGames = {
             const aiTalk = async (desc, sid, userText) => {
         const sp = sid && charById(sid);
          // 所有还在场的角色都带上，这次主要说话的排在前面
-        const allC = players.slice(1).filter(x => !x.out || x.id === sid).map(x => charById(x.id)).filter(Boolean);
+         const allC = players.slice(1).map(x => charById(x.id)).filter(Boolean);
         const recent = logs.slice(0, 6).map(l => l.text).join(' ');
         // 顺序固定（按入场顺序），系统提示词每次都一样，才能命中缓存
         // 这次谁主要说话，已经写在下面的 task 里了，不用靠排序
@@ -2657,19 +2774,33 @@ const PetGames = {
         const system = [
           `你在同时扮演${names.join('、')}。他们正在和${me.name}用手机玩一局宠物大富翁（棋子是各自的宠物），大家边玩边在游戏的聊天框里打字聊天。`,
           wb && `【世界设定】\n${wb}`,
+talkCtx && `【开局前大家最近的聊天，玩的时候可以自然提起】\n${talkCtx}`,
+...cs.map(c => memCtx[c.id]).filter(Boolean),
           ...cs.map(c => `【${c.name}的设定】\n${(c.persona || '（见世界设定）').slice(0, 800)}\n和${me.name}的关系：${getRel(pid, c.id).desc || '认识'}`),
-          `【要求】\n- 每行一条，格式：名字：内容。名字只能是${names.join('、')}，绝对不要替${me.name}说话。\n- 一共 1 到 5 条，都很短，像打游戏时随手打的字：得意、心疼钱、吐槽、起哄、互相拆台都可以，要符合各自的性格和关系。\n- 不写动作、神态和旁白。`,
+           `【要求】\n- 每行一条，格式：名字：内容。名字只能是${names.join('、')}，绝对不要替${me.name}说话。\n- 一共 1 到 5 条，都很短，像打游戏时随手打的字：得意、心疼钱、吐槽、起哄、互相拆台都可以，要符合各自的性格、和对方真实的相处模式，以及【大家现在的态度】。\n- 记忆和聊天记录里的事，只有当下真的碰到时才自然带一句，不要硬提。\n- 不写动作、神态和旁白。\n- 如果某人因为刚才的事或聊天内容，对某人的态度真的变了，另起一行写：#态度 名字>对象>变化>原因。变化是 -2 到 +2 的整数，正数是更想让着对方，负数是更想针对。要符合他的性格：较真、好胜的人被求情多半不为所动，但也不是绝对；心软的人容易被哄好，也会有不想让的时候。原因 15 字以内。大多数时候不用写。`,
         ].filter(Boolean).join('\n\n');
-
+ const recall = userText ? await recallFor(cs, userText) : '';
         const task = [
             `【局面】第 ${round}/${MAX} 轮。${standing(6)}${teams ? `\n这是组队赛，队友之间不收过路费：${teamText()}` : ''}`,
+stanceText() && `【大家现在的态度】${stanceText()}`,
           `【刚才发生的】\n${logs.slice(0, 6).reverse().map(l => l.text).join('\n')}`,
           chat.length && `【聊天框】\n${chat.slice(-8).map(x => x.name + '：' + x.text).join('\n')}`,
+recall && `【${me.name}刚才这句话让人想起的事（只有本人知道）】\n${recall}`,
           userText ? `${me.name}刚刚在聊天框说：${userText}。要有人回应。` : `${desc}。${sp ? `这次主要是${sp.name}开口，` : ''}说一两句就行。`,
         ].filter(Boolean).join('\n\n');
        const out = await API.claude(system, [{ role: 'user', content: task }], { maxTokens: 600, cache: true });
+        // 先把 #态度 行挑出来执行，剩下的才是聊天内容
+        const plNames = players.map(x => x.name);
+        for (const tag of out.match(/^\s*#态度.*$/gm) || []) {
+          const [a = '', b = '', d = '', why = ''] = tag.replace(/^\s*#态度\s*/, '').split(/[>＞]/).map(s => s.trim());
+          const an = Prompt.matchName(plNames, a), bn = Prompt.matchName(plNames, b);
+          const who = players.find(x => x.name === an && x.id !== 'user'), to = players.find(x => x.name === bn);
+          const n = Math.max(-2, Math.min(2, parseInt(d, 10) || 0));
+          if (who && to && n) shift(who, to, n, why);
+        }
+        const clean = out.replace(/^\s*#态度.*$/gm, '');
         // 名字对不上的那一条跳过，其他照常显示
-        const lines = Prompt.parseLines(out, names).msgs.filter(m => m.content && m.type !== 'sys')
+        const lines = Prompt.parseLines(clean, names).msgs.filter(m => m.content && m.type !== 'sys')
           .map(m => ({ c: cs.find(c => c.name === m.name), content: m.content }))
           .filter(x => x.c).slice(0, 5)
           .map(x => ({ id: x.c.id, name: x.c.name, content: x.content }));
@@ -2723,13 +2854,116 @@ const PetGames = {
         if (msg) log(msg, pl);
         pay(pl, null, amt);
       };
-
+ // ---- 卡牌和重掷：全是本地规则，不调 AI ----
+      const CARDS = ['nap', 'snail', 'swap', 'wreck', 'banana', 'guard'];
+      const REROLL = 40;
+      const foes = pl => others(pl).filter(o => !sameTeam(pl, o));
+      // 抽一张卡，手里道具最多 6 个
+      const giveCard = (pl, why = '') => {
+        if (Object.values(pl.items).reduce((a, b) => a + b, 0) >= 6) return;
+        const k = pick(CARDS);
+        pl.items[k]++;
+        if (why) log(`${pl.name}${why}，抽到一张${ITEMS[k].i}${ITEMS[k].n}`, pl);
+      };
+      // 出牌
+      const playCard = (pl, k, tg) => {
+        const it = ITEMS[k];
+        pl.items[k]--;
+        const sid = pl.id === 'user' ? tg?.id : pl.id; // 让角色来接话，不替你说话
+        if (k === 'banana') {
+          tiles[pl.pos].trap = pl.id;
+          log(`🍌 ${pl.name}在${tiles[pl.pos].n}扔了一块香蕉皮`, pl);
+          return;
+        }
+        if (tg.items.guard) {
+          tg.items.guard--;
+          log(`🪞 ${tg.name}的护盾挡下了${pl.name}的${it.i}${it.n}`, pl);
+ annoy(tg, pl, 0.5);
+          react(`${pl.name}想对${tg.name}用${it.n}，被护盾挡住了`, sid);
+          return;
+        }
+        let txt;
+        if (k === 'nap') { tg.nap = 1; txt = `💤 ${pl.name}对${tg.name}用了催眠卡，${tg.name}下回合要睡一觉`; }
+        else if (k === 'snail') { tg.snail = 1; txt = `🐌 ${pl.name}对${tg.name}用了蜗牛卡，${tg.name}下次最多走 3 步`; }
+        else if (k === 'swap') { [pl.pos, tg.pos] = [tg.pos, pl.pos]; txt = `🔄 ${pl.name}和${tg.name}交换了位置`; }
+        else if (k === 'wreck') {
+          const t = tiles.filter(x => x.owner === tg.id && x.lv).sort((a, b) => b.price - a.price)[0];
+          if (t) { t.lv--; txt = `🚧 ${pl.name}拆了${tg.name}在${t.n}的一级房子`; }
+          else { pay(tg, pl, 50); txt = `🚧 ${tg.name}没有房子可拆，赔了${pl.name} ¥50`; }
+        }
+        log(txt, pl);
+        draw();
+        annoy(tg, pl, 1.5);
+        react(txt, sid);
+      };
+      // 从某个位置往前 1~6 格，踩到对手地要付的过路费总和，用来判断前面危不危险
+      const danger = (pos, pl) => {
+        let s = 0;
+        for (let v = 1; v <= 6; v++) {
+          const t = tiles[(pos + v) % N];
+          if (t.price && t.owner && t.owner !== pl.id && !sameTeam(pl, byId(t.owner))) s += rentFor(t, pl);
+        }
+        return s;
+      };
+      // 角色出不出牌、出给谁。难度越高越爱出
+      const aiCard = pl => {
+        const foeNow = foes(pl).find(o => o.id === pl.foe);
+        // 好胜的人更爱出牌，较上劲了更爱
+        const rate = (diff < 1 ? 0.75 : diff > 1 ? 0.25 : 0.5) + (pl.comp - 5) * 0.04 + (foeNow ? 0.25 : 0);
+        if (Math.random() > rate) return null;
+        // 要不要手下留情：在意的人、快输光的人，心软的更会留情，好胜的更不会。都是概率
+        const spare = o => {
+          if (o === foeNow) return false;
+          const b = pl.bias[o.id] || 0;
+          if (b > 0 && Math.random() < b * 0.25 + pl.heart * 0.04 - pl.comp * 0.03) return true;
+          return worth(o) < worth(pl) * 0.5 && Math.random() < pl.heart * 0.06;
+        };
+        const fs = foes(pl).filter(o => !spare(o) && (o === foeNow || !o.items.guard || Math.random() < 0.3));
+        if (pl.items.swap) {
+          const t = [...fs].sort((a, b) => danger(a.pos, pl) - danger(b.pos, pl))[0];
+          if (t && danger(pl.pos, pl) - danger(t.pos, pl) > 200) return { k: 'swap', tg: t };
+        }
+        // 有较劲的先对他，没有就打领先的人；态度是负的人更容易被选中
+        const score = o => worth(o) * (1 - (pl.bias[o.id] || 0) * 0.15);
+        const lead = [...fs].sort((a, b) => score(b) - score(a))[0];
+        const top = fs.includes(foeNow) ? foeNow : lead && worth(lead) > worth(pl) * 0.9 ? lead : null;
+        if (top) {
+          if (pl.items.wreck && tiles.some(t => t.owner === top.id && t.lv)) return { k: 'wreck', tg: top };
+          if (pl.items.nap && !top.nap && !top.skip) return { k: 'nap', tg: top };
+          if (pl.items.snail && !top.snail) return { k: 'snail', tg: top };
+        }
+        const here = tiles[pl.pos];
+        if (pl.items.banana && !here.trap && pl.pos !== 0 && (here.owner === pl.id || Math.random() < 0.4)) return { k: 'banana' };
+        return null;
+      };
+      // 掷骰子（含飞毛腿）
+      const rollDice = async (pl, two) => {
+        for (let i = 0; i < 8; i++) { dice = Array.from({ length: two ? 2 : 1 }, () => 1 + R(6)); draw(); await wait(80); }
+        const raw = dice.join(' + ');
+        if (has(pl, 'swift') && dice.includes(1)) dice = dice.map(d => (d === 1 ? 3 : d));
+        const n = dice.reduce((a, b) => a + b, 0);
+        log(`${pl.name}${two ? '用了双骰卡，' : ''}掷出了 ${raw}${raw !== dice.join(' + ') ? `（💨飞毛腿：变成 ${dice.join(' + ')}）` : ''}${two ? ' = ' + n : ''}`, pl);
+        return n;
+      };
       // ---- 移动 ----
       const walk = async (pl, n) => {
         for (let i = 0; i < n && !stopped; i++) {
           pl.pos = (pl.pos + 1) % N;
-          if (pl.pos === 0) { const b = 200 + (has(pl, 'rich') ? 80 : 0); pl.money += b; log(`${pl.name}经过起点，领了 ¥${b}`, pl); }
+          if (pl.pos === 0) {
+            const b = 200 + (has(pl, 'rich') ? 80 : 0); pl.money += b; log(`${pl.name}经过起点，领了 ¥${b}`, pl);
+            giveCard(pl, '经过起点');
+          }
           draw(); await W8(220);
+          // 踩到别人的香蕉皮：停在这格，赔钱
+          const tr = tiles[pl.pos].trap, o = tr && byId(tr);
+          if (o && o !== pl && !sameTeam(pl, o)) {
+            tiles[pl.pos].trap = null;
+            log(`🍌 ${pl.name}踩到${o.name}的香蕉皮滑倒了，停在${tiles[pl.pos].n}，赔了 ¥60`, pl);
+            pay(pl, o, 60);
+annoy(pl, o, 1);
+            react(`${pl.name}踩到${o.name}扔的香蕉皮滑倒了`, pl.id === 'user' ? o.id : pl.id);
+            break;
+          }
         }
       };
       const back = async (pl, n) => { for (let i = 0; i < n && !stopped; i++) { pl.pos = (pl.pos - 1 + N) % N; draw(); await W8(220); } };
@@ -2743,6 +2977,7 @@ const PetGames = {
         ['获得一张免租卡 🛡️', pl => { pl.items.free++; }],
         ['获得一张双骰卡 🎲', pl => { pl.items.double++; }],
         ['获得一张抢地卡 🃏', pl => { pl.items.steal++; }],
+        ['获得一张随机卡牌 🎴', pl => giveCard(pl)],
         ['宠物撒腿狂奔，向前 3 格', async pl => { await walk(pl, 3); await land(pl); }],
         ['宠物想家了，直接跑回起点', async pl => { await moveTo(pl, 0); }],
         ['朋友叫你们去公园玩', async pl => { await moveTo(pl, 16); await land(pl); }],
@@ -2769,7 +3004,9 @@ const PetGames = {
         const grp = tiles.filter(x => x.g === t.g && x !== t);
         const completes = grp.every(x => x.owner === pl.id);
         // 困难模式下会抢别人快集齐的组，防止对方翻倍
-        const block = diff < 1 && grp.length && grp.every(x => x.owner && x.owner !== pl.id && x.owner === grp[0].owner);
+       const o0 = grp[0]?.owner;
+        // 困难模式抢所有人快集齐的组；杠上了，不管什么难度都抢仇人的
+        const block = grp.length && o0 && o0 !== pl.id && grp.every(x => x.owner === o0) && (diff < 1 || o0 === pl.foe) && o0 !== pl.soft;
         return pl.money - price >= reserve(pl) || ((completes || block) && pl.money - price >= 30);
       };
       const aiUp = (pl, c) => pl.money - c >= reserve(pl) * 1.5;
@@ -2833,11 +3070,24 @@ const PetGames = {
               pl.items.steal--;
               pay(pl, o, t.price); t.owner = pl.id;
               log(`🃏 ${pl.name}用抢地卡把${o.name}的${t.n}买走了`, pl);
+annoy(o, pl, 2);
               react(`${pl.name}用抢地卡抢走了${o.name}的${t.n}`, mine ? o.id : pl.id);
+              return;
+            }
+             // 放水：在意对方、或者对方快没钱了，按性格有几率只收一半。铁面无私的人也偶尔会心软
+            const bb = o.bias?.[pl.id] || 0;
+            const softChance = o.id === 'user' || !o.bias ? 0
+              : (bb > 0 ? bb * 0.15 + o.heart * 0.04 - o.comp * 0.03 : 0) + (pl.money < 200 ? o.heart * 0.04 : 0);
+            if (Math.random() < softChance) {
+              const half = Math.round(r / 2);
+              log(`🤝 ${o.name}对${pl.name}放水，过路费只收一半 ¥${half}`, pl);
+              pay(pl, o, half);
+              react(`${o.name}对${pl.name}放水，过路费只收了一半`, o.id);
               return;
             }
             log(`${pl.name}踩到${o.name}的${t.n}，付过路费 ¥${r}`, pl);
             pay(pl, o, r);
+            annoy(pl, o, r >= 150 ? 1 : r >= 60 ? 0.4 : 0);
             if (mine || o.id === 'user') react(`${pl.name}踩到${o.name}的${t.n}，付了 ¥${r} 过路费`, mine ? o.id : pl.id);
           }
           return;
@@ -2914,33 +3164,68 @@ const PetGames = {
           } else if (pl.money > 600 && Math.random() < 0.6) { pay(pl, null, 50); pl.skip = 0; log(`${pl.name}花 ¥50 让宠物提前出院`, pl); }
           if (pl.skip) { pl.skip--; log(`${pl.name}的宠物还在住院，这轮休息`, pl); await W8(1000); return; }
         }
+        if (pl.nap) { pl.nap = 0; log(`💤 ${pl.name}的宠物被催眠了，这一轮睡过去了`, pl); await W8(1000); return; }
         let two = false, fixed = 0;
         if (pl.id === 'user') {
-          const opts = [{ label: '🎲 掷骰子', value: 'roll' }];
-          if (pl.items.double) opts.push({ label: `🎲🎲 双骰卡（${pl.items.double}）`, value: 'double' });
-          if (pl.items.remote) opts.push({ label: `🎮 遥控骰子（${pl.items.remote}）`, value: 'remote' });
-          const a = await ask(opts);
-          if (a === 'double') { pl.items.double--; two = true; }
-          if (a === 'remote') {
-            fixed = await ask([1, 2, 3, 4, 5, 6].map(v => ({ label: `走 ${v} 步 → ${tiles[(pl.pos + v) % N].n}`, value: v })));
-            pl.items.remote--;
+          let played = false;
+          for (;;) {
+            const opts = [{ label: '🎲 掷骰子', value: 'roll' }];
+            if (pl.items.double) opts.push({ label: `🎲🎲 双骰卡（${pl.items.double}）`, value: 'double' });
+            if (pl.items.remote) opts.push({ label: `🎮 遥控骰子（${pl.items.remote}）`, value: 'remote' });
+            const cards = played ? [] : Object.keys(ITEMS).filter(k => ITEMS[k].card && pl.items[k]);
+            if (cards.length) opts.push({ label: '🎴 出牌（每回合一张）', value: 'card' });
+            const a = await ask(opts);
+            if (stopped) return;
+            if (a === 'card') {
+              const k = await ask([...cards.map(k => ({ label: `${ITEMS[k].i}${ITEMS[k].n}×${pl.items[k]}：${ITEMS[k].d}`, value: k })), { label: '算了', value: null }]);
+              if (stopped) return;
+              if (!k) continue;
+              let tg = null;
+              if (ITEMS[k].card === 'target') {
+                const fs = foes(pl);
+                if (!fs.length) { toast('没有可以出牌的对手'); continue; }
+                const id = await ask([...fs.map(o => ({ label: `${players.indexOf(o) + 1}号${o.name}（¥${o.money}${o.items.guard ? '，有护盾' : ''}）`, value: o.id })), { label: '算了', value: null }]);
+                if (stopped) return;
+                if (!id) continue;
+                tg = byId(id);
+              }
+              if (ITEMS[k].card === 'trap' && (tiles[pl.pos].trap || pl.pos === 0)) { toast('这一格不能扔'); continue; }
+              playCard(pl, k, tg);
+              played = true;
+              continue;
+            }
+            if (a === 'double') { pl.items.double--; two = true; }
+            if (a === 'remote') {
+              fixed = await ask([1, 2, 3, 4, 5, 6].map(v => ({ label: `走 ${v} 步 → ${tiles[(pl.pos + v) % N].n}`, value: v })));
+              pl.items.remote--;
+            }
+            break;
           }
         } else {
           actBox(`<p class="mono-wait">${esc(pl.name)}在想……</p>`);
           await W8(800);
+          const c = aiCard(pl);
+          if (c) { playCard(pl, c.k, c.tg); await W8(700); }
           if (pl.items.remote) { const v = aiRemote(pl); if (v) { pl.items.remote--; fixed = v; } }
           if (!fixed && pl.items.double && Math.random() < 0.3) { pl.items.double--; two = true; }
         }
-        if (stopped) return;
+        if (stopped || pl.out) return;
         let n;
         if (fixed) { dice = [fixed]; n = fixed; log(`${pl.name}用了遥控骰子，走 ${n} 步`, pl); }
         else {
-          for (let i = 0; i < 8; i++) { dice = Array.from({ length: two ? 2 : 1 }, () => 1 + R(6)); draw(); await wait(80); }
-          const raw = dice.join(' + ');
-          if (has(pl, 'swift') && dice.includes(1)) dice = dice.map(d => (d === 1 ? 3 : d));
-          n = dice.reduce((a, b) => a + b, 0);
-          log(`${pl.name}${two ? '用了双骰卡，' : ''}掷出了 ${raw}${raw !== dice.join(' + ') ? `（💨飞毛腿：变成 ${dice.join(' + ')}）` : ''}${two ? ' = ' + n : ''}`, pl);
+          n = await rollDice(pl, two);
+          // 重掷：先看看要落到哪、要交多少过路费
+          const dest = () => tiles[(pl.pos + n) % N];
+          const rentAhead = () => { const t = dest(); return t.price && t.owner && t.owner !== pl.id && !sameTeam(pl, byId(t.owner)) ? rentFor(t, pl) : 0; };
+          if (pl.money >= REROLL + 50 && !stopped) {
+            const again = pl.id === 'user'
+              ? await ask([{ label: `就走 ${n} 步 → ${dest().n}${rentAhead() ? `（过路费 ¥${rentAhead()}）` : ''}`, value: false }, { label: `花 ¥${REROLL} 重掷一次`, value: true }])
+              : rentAhead() >= 100 && pl.money > 300;
+            if (stopped) return;
+            if (again) { pay(pl, null, REROLL); log(`${pl.name}花 ¥${REROLL} 重掷了一次`, pl); await W8(400); n = await rollDice(pl, two); }
+          }
         }
+        if (pl.snail) { pl.snail = 0; if (n > 3) { n = 3; log(`🐌 ${pl.name}中了蜗牛卡，只能走 3 步`, pl); } }
         await W8(600);
         await walk(pl, n);
         if (stopped) return;
@@ -2978,7 +3263,12 @@ const PetGames = {
         }
         done(place === 1 ? 20 : Math.max(2, 12 - place * 3));
         const chars = players.slice(1).map(x => charById(x.id)).filter(Boolean);
-        for (const c of chars) await addMsg(Conv.dm(pid, c.id), 'user', `${me.name} 和 ${chars.map(x => x.name).join('、')} 一起玩了一局宠物大富翁。${summary}`, 'sys');
+        // 把这局谁让着谁、谁跟谁较劲写进去，记忆系统总结私聊时会记下来，下次聊天角色就记得
+        const feud = players.slice(1).filter(x => x.bias).map(x => [
+          x.soft && `${x.name}这局一直让着${byId(x.soft)?.name}`,
+          x.foe && `${x.name}这局跟${byId(x.foe)?.name}较上劲了`,
+        ]).flat().filter(Boolean).join('，');
+        for (const c of chars) await addMsg(Conv.dm(pid, c.id), 'user', `${me.name} 和 ${chars.map(x => x.name).join('、')} 一起玩了一局宠物大富翁。${summary}${feud ? '。' + feud : ''}`, 'sys');
         for (let i = 0; i < 40 && talking; i++) await wait(250);
         if (!stopped) talk(`游戏结束了。${summary}说说赛后感想`);
       };
@@ -2992,6 +3282,7 @@ const PetGames = {
           cur = (cur + 1) % players.length;
           if (cur === 0) {
             if (++round > MAX) break;
+cool();
             log(`—— 第 ${round} 轮 ——`);
             if (round % 3 === 0) {
               const e = pick(EVENTS);
@@ -3011,8 +3302,8 @@ const PetGames = {
       const myPets = () => Pet.list.filter(x => Pet.isMine(x) && Pet.visible(x));
       const petsOf = cid => Pet.list.filter(x => x.owners.includes(cid) && Pet.visible(x));
       const petName = x => `${x.name}（${SPECIES[x.sp].name}）`;
-          const begin = (chars, money, myPet = p, picks = {}, teamList = null) => {
-        const sps = Object.keys(SPECIES), items = () => ({ remote: 0, double: 0, free: 0, steal: 0 });
+        const begin = async (chars, money, myPet = p, picks = {}, teamList = null) => {
+        const sps = Object.keys(SPECIES), items = () => Object.fromEntries(Object.keys(ITEMS).map(k => [k, 0]));
                players = [
           { id: 'user', name: me.name, pet: myPet, money, pos: 0, out: false, skip: 0, color: colorOf(0), items: items(), talent: talentFor(myPet) },
           ...chars.map((c, i) => {
@@ -3020,10 +3311,12 @@ const PetGames = {
             const own = petsOf(c.id).filter(x => x !== myPet);
             let pet = own.find(x => x.id === picks[c.id]) || (own.length ? pick(own) : null);
             if (!pet) { const sp = pick(sps); pet = { sp, color: R(SPECIES[sp].colors.length) }; }
-            return { id: c.id, name: c.name, pet, money, pos: 0, out: false, skip: 0, color: colorOf(i + 1), greed: 0.3 + Math.random() * 0.6, items: items(), talent: talentFor(pet) };
+            return { id: c.id, name: c.name, pet, money, pos: 0, out: false, skip: 0, color: colorOf(i + 1), greed: 0.3 + Math.random() * 0.6, items: items(), talent: talentFor(pet),
+            grudge: {}, bias: {}, why: {}, comp: 5, heart: 5, foe: null, soft: null, mood: '' };
           }),
         ];
 teams = teamList;
+ players.forEach(x => giveCard(x)); // 开局每人发一张卡
         if (teams) {
           const big = Math.max(...teams.map(t => t.ids.length));
           for (const t of teams) {
@@ -3052,6 +3345,22 @@ teams = teamList;
         log(`游戏开始，${players.length} 个人，每人 ¥${money}`);
         log('宠物天赋：' + players.map(x => `${x.name}${x.talent.i}${x.talent.n}`).join('，'));
          if (teams) log('组队：' + teamText());
+ // 读一次最近的聊天，定下赛前心态。整局只调这一次
+        if (S.settings.claude.key) {
+          log('大家在琢磨这局怎么玩……');
+          try {
+            talkCtx = (await recentTalk(chars)).slice(-3000);
+ // 每个角色召回和这局玩家有关的记忆。大家用同一句查询，向量接口只请求一次
+            const q = `${me.name}和${chars.map(c => c.name).join('、')}一起玩游戏\n${talkCtx.slice(-500)}`;
+            for (const c of chars) {
+              const t = await Memory.retrieveText(c.id, pid, q, c.name);
+              if (t) memCtx[c.id] = t.slice(0, 1500);
+            }
+            await aiStance(chars);
+          } catch (e) { Log.add('大富翁赛前心态生成失败', e.message); }
+          if (stopped) return;
+          if (stanceText()) log('赛前心态：' + stanceText());
+        }
         talk(teams ? `游戏刚开始，是组队赛：${teamText()}。队友互相打气，对手之间放放狠话` : '游戏刚开始，大家打个招呼、放放狠话');
         loop();
       };
