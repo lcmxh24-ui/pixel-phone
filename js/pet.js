@@ -155,8 +155,10 @@ const WEAR = {
     for (let x = a.l - 1; x <= a.r + 1; x++) put(x, a.ey, '#1e1e24');
     for (const e of a.eyes) put(e, a.ey, '#6a6a7a');
   } },
-  blush: { slot: 'face', n: '腮红', i: '😊', gen(a, put) {
-    for (const x of [a.l - 1, a.r + 1]) if (a.solid(x, a.ey + 1)) put(x, a.ey + 1, '#f490a0');
+   blush: { slot: 'face', n: '腮红', i: '😊', gen(a, put) {
+    // 侧脸的动物只画一边
+    const xs = a.side === 'l' ? [a.l - 1] : a.side === 'r' ? [a.r + 1] : [a.l - 1, a.r + 1];
+    for (const x of xs) if (a.solid(x, a.ey + 1)) put(x, a.ey + 1, '#f490a0');
   } },
   scarf: { slot: 'neck', n: '红围巾', i: '🧣', gen(a, put) {
     let end = -1;
@@ -172,11 +174,54 @@ const WEAR = {
     put(a.cx - 1, a.ny, c); put(a.cx, a.ny, '#a02030'); put(a.cx + 1, a.ny, c);
     put(a.cx - 1, a.ny + 1, c); put(a.cx + 1, a.ny + 1, c);
   } },
+beret:   { slot: 'head', n: '贝雷帽', i: '🎨', pal: { R: '#c03040', D: '#801828' }, map: ['..D..', '.RRR.', 'RRRRR'] },
+  chef:    { slot: 'head', n: '厨师帽', i: '👨‍🍳', pal: { W: '#ffffff', G: '#d8d8d8' }, map: ['.W.W.', 'WWWWW', '.WWW.', '.GGG.'] },
+  catears: { slot: 'head', n: '猫耳发箍', i: '🐱', pal: { K: '#2a2a30', P: '#f4a0b0' }, map: ['K...K', 'KP.PK', 'KKKKK'] },
+  halo:    { slot: 'head', n: '天使光环', i: '😇', pal: { Y: '#f8e060' }, map: ['.YYY.', 'Y...Y', '.YYY.', '.....'] },
+  unicorn: { slot: 'head', n: '独角兽角', i: '🦄', pal: { Y: '#f8d838', P: '#f490b0', W: '#ffffff' }, map: ['..Y..', '..P..', '.YWY.', '.PPP.'] },
+  leaf:    { slot: 'head', n: '小叶子', i: '🌱', pal: { G: '#5fbf4a', D: '#3f7a28' }, map: ['.GG', 'GG.', '.D.'] },
+  // ---- 新脸部 ----
+  mask: { slot: 'face', n: '口罩', i: '😷', gen(a, put) {
+    for (let x = a.l - 1; x <= a.r + 1; x++) if (a.solid(x, a.ey + 1)) put(x, a.ey + 1, '#e8f4ff');
+  } },
+  monocle: { slot: 'face', n: '单片眼镜', i: '🧐', gen(a, put) {
+    const e = a.eyes[a.eyes.length - 1], c = '#c8a030';
+    put(e - 1, a.ey, c); put(e + 1, a.ey, c); put(e, a.ey - 1, c); put(e, a.ey + 1, c);
+    put(e + 1, a.ey + 2, c); // 垂下来的小链子
+  } },
+  // ---- 新脖子 ----
+  pearl: { slot: 'neck', n: '珍珠项链', i: '📿', gen(a, put) {
+    let k = 0;
+    for (let x = a.l - 2; x <= a.r + 2; x++) if (a.solid(x, a.ny)) put(x, a.ny, k++ % 2 ? '#e8e0f0' : '#ffffff');
+  } },
+  tie: { slot: 'neck', n: '小领带', i: '👔', gen(a, put) {
+    const c = '#3a60c0';
+    put(a.cx, a.ny, '#203a80');
+    if (a.ny + 1 < a.H) put(a.cx, a.ny + 1, c);
+    if (a.ny + 2 < a.H) put(a.cx, a.ny + 2, c);
+  } },
 };
-// 个别动物的装扮位置修正：ny 是脖子在第几行（从 0 数），ey 是眼睛行，cx 是脸中线
-// 哪只戴着别扭就在这里加一行
+// 个别动物的装扮位置修正，哪只戴着别扭就改它那一行：
+//   hy：头饰上下移动，-1 是往上一格，1 是往下一格
+//   hx：头饰左右移动，-1 是往左一格，1 是往右一格
+//   top：头顶在第几行（从 0 数），用来让头饰避开耳朵
+//   ny：脖子饰品在第几行（从 0 数），数字越大越往下
+//   nx：领结、铃铛左右移动，-1 是往左一格
+//   side：侧脸的动物腮红只画一边，'l' 画左边，'r' 画右边
 const WEAR_FIX = {
-  frog: { ny: 5 }, // 嘴在第 4 行，围巾放到嘴下面的白肚皮上
+  frog:      { ny: 5 },
+  dog:       { ny: 5 },            // 脖子饰品往下一格，不再挡嘴
+  rabbit:    { top: 3 },           // 头饰戴在脑袋上，不戴在耳朵尖上
+  chick:     { hx: -1 },           // 头饰往左一格
+  cat:       { hy: -1 },           // 头饰往上一格
+  wolf:      { ny: 7, nx: -1 },    // 脖子饰品往下两格，往左一格
+  cheetah:   { hy: -1, ny: 5 },    // 头饰往上一格，脖子饰品往下一格
+  cow:       { hx: -1, ny: 6 },    // 头饰往左一格，脖子饰品往下两格
+  penguin:   { hx: -1 },           // 头饰往左一格
+  dino:      { side: 'r' },        // 侧脸，腮红只画一边
+  hamster:   { ny: 5 },            // 脖子饰品往下一格
+  fox:       { hy: -1, ny: 6 },    // 头饰往上一格，脖子饰品往下一格
+  capybara:  { side: 'l', ny: 6 }, // 侧脸，腮红只画一边；脖子饰品往下一格
 };
 
 const Pet = {
@@ -715,17 +760,21 @@ ${recent ? '。最近：' + recent : ''}` };
   },
 
   // 装扮要画的像素：[列, 行, 颜色]，坐标和宠物点阵一致
-  wearPixels(p) {
-        const a = { ...this.anchor(this.mapOf(p)), ...WEAR_FIX[p.sp] }, out = [], w = p.wear || {};
+ wearPixels(p) {
+    const fix = WEAR_FIX[p.sp] || {};
+    const a = { ...this.anchor(this.mapOf(p)), ...fix }, out = [], w = p.wear || {};
     const put = (x, y, c) => { if (x >= 0 && x < a.W) out.push([x, y, c]); };
     const head = WEAR[w.head];
     if (head?.map) {
       const hw = head.map[0].length, hh = head.map.length;
-      const left = Math.max(0, Math.min(a.W - hw, a.cx - Math.floor(hw / 2))), top = a.top - hh + 1;
+      // hx 左右挪，hy 上下挪
+      const left = Math.max(0, Math.min(a.W - hw, a.cx - Math.floor(hw / 2) + (fix.hx || 0)));
+      const top = a.top - hh + 1 + (fix.hy || 0);
       head.map.forEach((row, j) => [...row].forEach((ch, i) => { const c = head.pal[ch]; if (c) put(left + i, top + j, c); }));
     }
     WEAR[w.face]?.gen(a, put);
-    WEAR[w.neck]?.gen(a, put);
+    // nx 让领结、铃铛左右挪
+    WEAR[w.neck]?.gen({ ...a, cx: a.cx + (fix.nx || 0) }, put);
     return out;
   },
   wearText(p) { return Object.values(p.wear || {}).map(k => WEAR[k]?.n).filter(Boolean).join('、'); },
