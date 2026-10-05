@@ -2714,6 +2714,13 @@ const PetGames = {
         const here = players.filter(x => !x.out && x.pos === i).map(x => `${players.indexOf(x) + 1}号${x.name}`);
         let s = `${t.i}${t.n}`;
         if (t.price) s += o ? ` · ${players.indexOf(o) + 1}号${o.name}${teamOf(o) ? `（${teamOf(o).n}）` : ''}的地 · ${LV[t.lv]} · 过路费 ¥${rent(t)}` : ` · 没人买 · ¥${t.price}`;
+else s += ' · ' + ({
+          start: '经过 +¥200 并抽一张卡，正好停下再 +¥100', tax: `交 ¥${t.v}`, jail: '体检费 ¥30；吃坏肚子会被送来住一轮',
+          chance: '抽一张机会卡，多半是好事', fate: '抽一张命运卡，多半要花钱', bus: '花 ¥30 坐到另一个公交站',
+          park: '选 ¥50 或一个随机道具', lottery: '花 ¥20 买彩票，最高中 ¥500', sport: '掷骰子，点数 × ¥30',
+          portal: '随机传送到一块地', shop: '买道具和卡牌',
+        }[t.k] || '');
+        if (tiles[i].trap) s += ` · 有${byId(tiles[i].trap)?.name}的香蕉皮`;
         if (here.length) s += ` · 现在在这：${here.join('、')}`;
         hl = { i, t: performance.now(), c: o?.color || C.acc };
         draw();
@@ -2783,7 +2790,7 @@ talkCtx && `【开局前大家最近的聊天，玩的时候可以自然提起�
         const task = [
             `【局面】第 ${round}/${MAX} 轮。${standing(6)}${teams ? `\n这是组队赛，队友之间不收过路费：${teamText()}` : ''}`,
 stanceText() && `【大家现在的态度】${stanceText()}`,
-          `【刚才发生的】\n${logs.slice(0, 6).reverse().map(l => l.text).join('\n')}`,
+           `【刚才发生的】\n${logs.filter(l => !l.text.startsWith('💭')).slice(0, 6).reverse().map(l => l.text).join('\n')}`,
           chat.length && `【聊天框】\n${chat.slice(-8).map(x => x.name + '：' + x.text).join('\n')}`,
 recall && `【${me.name}刚才这句话让人想起的事（只有本人知道）】\n${recall}`,
           userText ? `${me.name}刚刚在聊天框说：${userText}。要有人回应。` : `${desc}。${sp ? `这次主要是${sp.name}开口，` : ''}说一两句就行。`,
@@ -2936,13 +2943,124 @@ recall && `【${me.name}刚才这句话让人想起的事（只有本人知道�
         if (pl.items.banana && !here.trap && pl.pos !== 0 && (here.owner === pl.id || Math.random() < 0.4)) return { k: 'banana' };
         return null;
       };
-  // 角色逛道具店：困难模式会挑自己缺的买，其他难度随便买
-      const aiShop = (pl, can) => {
-        if (pl.money < 700 * diff || Math.random() > pl.greed + (diff < 1 ? 0.3 : 0)) return null;
-        if (diff >= 1) return pick(can)[0];
-        const want = ['guard', 'wreck', 'nap', 'free', 'remote', 'swap', 'snail', 'banana', 'double', 'steal'];
-        return want.find(k => !pl.items[k] && can.some(([x]) => x === k)) || null;
+ // ===== 角色的"思考"：困难模式按局面算，想法写进动态 =====
+      const think = (pl, text) => { if (text && pl.id !== 'user') log(`💭 ${pl.name}：${text}`, pl); };
+      const handN = pl => Object.values(pl.items).reduce((a, b) => a + b, 0);
+      const handText = pl => Object.entries(pl.items).filter(([, v]) => v).map(([k, v]) => `${ITEMS[k].n}×${v}`).join('、') || '没有道具';
+      const ITEM_DESC = { remote: '下次自己指定走几步', double: '下次掷两个骰子', free: '免一次过路费', steal: '把别人没盖房的地买过来' };
+      const descOf = k => ITEMS[k].d || ITEM_DESC[k] || '';
+      // 这个道具现在对他值多少钱，以及理由
+      const itemValue = (pl, k) => {
+        const fs = foes(pl), lead = [...fs].sort((a, b) => worth(b) - worth(a))[0];
+        const atk = fs.reduce((s, o) => s + o.items.nap + o.items.snail + o.items.swap + o.items.wreck, 0);
+        const hostile = fs.filter(o => (o.bias?.[pl.id] || 0) <= -2);
+        const rents = tiles.filter(t => t.owner && t.owner !== pl.id && !sameTeam(pl, byId(t.owner))).map(t => rentFor(t, pl));
+        const ahead = (a, b) => { let n = 0; for (let v = a; v <= b; v++) { const t = tiles[(pl.pos + v) % N]; if (t.price && !t.owner) n++; } return n; };
+        const myN = tiles.filter(t => t.owner === pl.id).length, dg = danger(pl.pos, pl);
+        let v = 0, why = '';
+        if (k === 'guard') { v = 40 + atk * 25 + hostile.length * 40; why = hostile.length ? `${hostile[0].name}一直针对我，得防着` : atk ? '别人手里攻击卡不少' : '买个保险'; }
+        if (k === 'wreck') { const ok = lead && tiles.some(t => t.owner === lead.id && t.lv); v = ok ? 160 : 30; why = ok ? `${lead.name}房子盖得太多了` : '先留着'; }
+        if (k === 'nap') { const ok = lead && worth(lead) > worth(pl); v = ok ? 130 : 50; why = ok ? `让${lead.name}睡一觉` : '关键时候能用'; }
+        if (k === 'snail') { const ok = lead && worth(lead) > worth(pl); v = ok ? 80 : 40; why = ok ? `拖一拖${lead.name}` : '便宜'; }
+        if (k === 'free') { v = rents.length ? Math.max(...rents) * 0.6 : 20; why = rents.length ? '外面的过路费太贵了' : '暂时用不上'; }
+        if (k === 'remote') { v = 50 + dg * 0.3 + ahead(1, 6) * 20; why = dg > 100 ? '前面太危险，得自己选步数' : '想精准踩空地'; }
+        if (k === 'swap') { v = 50 + dg * 0.4; why = dg > 100 ? '前面全是别人的地' : '留着躲危险'; }
+        if (k === 'banana') { v = myN ? 40 + myN * 8 : 30; why = myN ? '扔在自己地上，滑倒还得交钱' : '便宜'; }
+        if (k === 'double') { v = 20 + ahead(7, 12) * 15; why = ahead(7, 12) >= 2 ? '远处空地多，想走远点' : '走得快一点'; }
+        if (k === 'steal') {
+          const n = tiles.filter(t => t.owner && t.owner !== pl.id && !t.lv && !sameTeam(pl, byId(t.owner))
+            && tiles.some(x => x.g === t.g && x !== t && x.owner === pl.id)).length;
+          v = n ? 120 + n * 40 : 40; why = n ? '有几块地抢过来就能凑齐一组' : '暂时没想抢的';
+        }
+        v /= 1 + (pl.items[k] || 0);            // 已经有的就没那么想要了
+        if (round > MAX * 0.8) v *= 0.7;        // 快结束了，道具用不了几次
+        return [Math.round(v), why];
       };
+      // 困难模式 + 填了 Key：让角色按性格自己挑，顺便说出心里话
+      const aiShopThink = async (pl, scored) => {
+        const c = charById(pl.id);
+        const att = Object.entries(pl.bias || {}).filter(([, v]) => v).map(([id, v]) => `${v > 0 ? '想让着' : '想针对'}${byId(id)?.name}`).join('，');
+        const system = `你在替${pl.name}决定宠物大富翁里在道具店买什么。${pl.name}的性格：${(c?.persona || '（无）').slice(0, 200)}
+按他的性格和局面盘算，想法要像他自己心里嘀咕的话。
+只输出一行：买：道具名｜心里想的话（20 字以内，用他的口吻）。不买就写：不买｜心里想的话`;
+        const task = `第 ${round}/${MAX} 轮。${pl.name}现金 ¥${pl.money}，手里：${handText(pl)}。${pl.mood ? '这局心态：' + pl.mood + '。' : ''}${att ? '态度：' + att + '。' : ''}
+局面：${standing(6)}
+能买的（划算分是参考，越高越划算）：
+${scored.map(s => `${ITEMS[s.k].n} ¥${ITEMS[s.k].price}：${descOf(s.k)}（${s.why}，划算分 ${s.net}）`).join('\n')}`;
+        const out = await API.claude(system, [{ role: 'user', content: task }], { maxTokens: 80 });
+        const m = out.match(/^(.*?)[|｜](.*)$/m);
+        if (!m) return undefined;
+        const thought = m[2].trim().slice(0, 30);
+        if (/不买/.test(m[1])) { think(pl, thought); return null; }
+        const s = scored.find(x => m[1].includes(ITEMS[x.k].n));
+        if (!s) return undefined;
+        think(pl, thought);
+        return s.k;
+      };
+      const aiShop = async (pl, can) => {
+        if (handN(pl) >= 6) return null;
+        if (diff > 1) return pl.money > 700 * diff && Math.random() < pl.greed * 0.5 ? pick(can)[0] : null;
+        const budget = pl.money - reserve(pl) * (diff < 1 ? 0.6 : 1);
+        const scored = can.filter(([, v]) => v.price <= budget)
+          .map(([k, v]) => { const [val, why] = itemValue(pl, k); return { k, net: val - v.price, why }; })
+          .sort((a, b) => b.net - a.net);
+        if (!scored.length) { think(pl, '钱得留着交过路费'); return null; }
+        if (diff < 1 && S.settings.claude.key) {
+          try { const r = await aiShopThink(pl, scored); if (r !== undefined) return r; }
+          catch (e) { Log.add('大富翁道具店思考失败，改用本地计算', e.message); }
+        }
+        const best = scored[0];
+        if (best.net <= (diff < 1 ? 0 : 30)) { if (diff < 1) think(pl, '没什么值得买的'); return null; }
+        think(pl, best.why);
+        return best.k;
+      };
+      // 出牌时的想法
+      const cardWhy = (pl, c) => {
+        const tg = c.tg;
+        if (!tg) return '这格是我的地盘，扔块香蕉皮';
+        if (c.k === 'swap') return `前面全是别人的地，跟${tg.name}换个位置`;
+        if (tg.id === pl.foe) return `${pl.why[tg.id] || '看他不顺眼'}，这张给${tg.name}`;
+        return `${tg.name}领先太多了，得压一压`;
+      };
+      // 双骰卡：前面近处危险、远处空地多才用
+      const aiDouble = pl => {
+        if (diff >= 1) return Math.random() < 0.3;
+        let far = 0;
+        for (let v = 7; v <= 12; v++) { const t = tiles[(pl.pos + v) % N]; if (t.price && !t.owner) far++; }
+        const yes = danger(pl.pos, pl) >= 120 || far >= 3;
+        if (yes) think(pl, far >= 3 ? '远处空地多，掷两个骰子' : '近处太危险，走远一点');
+        return yes;
+      };
+      // 免租卡 / 抢地卡
+      const aiDefend = (pl, t, o, r, opts) => {
+        if (opts.some(x => x.value === 'steal')) {
+          const grp = tiles.filter(x => x.g === t.g && x !== t);
+          const completes = grp.every(x => x.owner === pl.id), mineN = grp.filter(x => x.owner === pl.id).length;
+          const spare = (pl.bias?.[o.id] || 0) >= 2 && Math.random() < 0.6;
+          const ok = diff < 1
+            ? !spare && (completes || mineN >= 1 || o.id === pl.foe) && pl.money - t.price > 120
+            : pl.money - t.price > 250;
+          if (ok) { if (diff < 1) think(pl, completes ? `抢下${t.n}就集齐一整组了` : `${t.n}早就想要了`); return 'steal'; }
+        }
+        if (opts.some(x => x.value === 'free') && r >= (diff < 1 ? 40 : diff > 1 ? 100 : 60)) return 'free';
+        return null;
+      };
+      // 公交：比较两边的危险和空地
+      const aiBus = (pl, to) => {
+        if (pl.money < 30) return false;
+        if (diff >= 1) return pl.money > 300 && Math.random() < 0.5;
+        const freeN = p0 => { let n = 0; for (let v = 1; v <= 6; v++) { const t = tiles[(p0 + v) % N]; if (t.price && !t.owner) n++; } return n; };
+        const here = danger(pl.pos, pl), there = danger(to, pl);
+        const gain = here - there + (freeN(to) - freeN(pl.pos)) * 40 + (to < pl.pos ? 200 : 0) - 30;
+        if (gain > 30) { think(pl, there < here ? '这边太危险，坐车躲一躲' : '那边空地多，过去看看'); return true; }
+        return false;
+      };
+      // 彩票平均每张回本 ¥65，困难模式有闲钱就买
+      const aiLottery = pl => diff < 1 ? pl.money >= 60 : pl.money > 200 && Math.random() < 0.6;
+      // 公园：道具少拿道具，缺钱拿钱
+      const aiPark = pl => diff < 1 ? (pl.money >= 150 && handN(pl) < 4 ? 'item' : 'money') : Math.random() < 0.3 ? 'item' : 'money';
+      // 住院：钱够留底就提前出院
+      const aiBail = pl => diff < 1 ? pl.money - 50 >= reserve(pl) : pl.money > 600 && Math.random() < 0.6;
       // 掷骰子（含飞毛腿）
       const rollDice = async (pl, two) => {
         for (let i = 0; i < 8; i++) { dice = Array.from({ length: two ? 2 : 1 }, () => 1 + R(6)); draw(); await wait(80); }
@@ -3016,15 +3134,29 @@ annoy(pl, o, 1);
         const block = grp.length && o0 && o0 !== pl.id && grp.every(x => x.owner === o0) && (diff < 1 || o0 === pl.foe) && o0 !== pl.soft;
         return pl.money - price >= reserve(pl) || ((completes || block) && pl.money - price >= 30);
       };
-      const aiUp = (pl, c) => pl.money - c >= reserve(pl) * 1.5;
+      // 困难模式：集齐一组的地优先升级，最后两轮不升（回不了本）
+      const aiUp = (pl, c, t) => (diff < 1 && round > MAX - 2) ? false
+        : pl.money - c >= reserve(pl) * (diff < 1 && t && setOwned(t) ? 0.8 : 1.5);
       const aiRemote = pl => {
-        let best = 0, bv = 0;
+        let best = 1, bv = -Infinity;
         for (let v = 1; v <= 6; v++) {
           const t = tiles[(pl.pos + v) % N];
-          const sc = t.price ? (!t.owner ? (pl.money > t.price ? t.price : 0) : t.owner === pl.id ? 50 : -rentFor(t, pl)) : 0;
+          let sc = 0;
+          if (t.price) {
+            const o = t.owner && byId(t.owner);
+            if (!t.owner) {
+              const grp = tiles.filter(x => x.g === t.g && x !== t);
+              sc = pl.money - cost(pl, t.price, true) >= 30 ? t.price * (diff < 1 && grp.every(x => x.owner === pl.id) ? 2 : 1) : 0;
+            } else if (t.owner === pl.id) sc = t.lv < 3 && pl.money > cost(pl, upCost(t)) ? 60 : 10;
+            else if (sameTeam(pl, o)) sc = 5;
+            else sc = -rentFor(t, pl);
+          } else if (diff < 1) sc = { start: 100, sport: 60, park: 40, chance: 30, shop: pl.money > 400 ? 30 : 0, fate: -20, jail: -30, tax: -80 }[t.k] || 0;
+          if (diff < 1 && t.trap && t.trap !== pl.id) sc -= 60;
           if (sc > bv) { bv = sc; best = v; }
         }
-        return bv > 0 && Math.random() < 0.7 ? best : 0;
+        const use = diff < 1 ? bv >= 60 || (danger(pl.pos, pl) >= 100 && bv >= 0) : bv > 0 && Math.random() < 0.7;
+        if (use && diff < 1) think(pl, `走 ${best} 步到${tiles[(pl.pos + best) % N].n}最划算`);
+        return use ? best : 0;
       };
 
       // ---- 落地 ----
@@ -3049,7 +3181,7 @@ annoy(pl, o, 1);
             if (pl.money < c) return log(`${pl.name}想升级${t.n}，钱不够`, pl);
             const yes = mine
               ? await ask([{ label: `升级成${LV[t.lv + 1]}（¥${c}，过路费 ${rent(t)}→${rent({ ...t, lv: t.lv + 1 })}）`, value: true }, { label: '先不升级', value: false }])
-              : aiUp(pl, c);
+             : aiUp(pl, c, t);
             if (stopped || !yes) return;
             pl.money -= c; t.lv++;
             log(`${pl.name}把${t.n}升级成了${LV[t.lv]}`, pl);
@@ -3057,14 +3189,32 @@ annoy(pl, o, 1);
           } else {
             const o = byId(t.owner), r = rentFor(t, pl);
   if (sameTeam(pl, o)) return log(`${pl.name}路过队友${o.name}的${t.n}，不用交过路费`, pl);
+ // 角色踩到你的地：由你决定收多少
+            if (o.id === 'user' && pl.id !== 'user') {
+              const half = Math.round(r / 2);
+              const a = await ask([
+                { label: `收过路费 ¥${r}`, value: 1 },
+                { label: `放水，只收一半 ¥${half}`, value: 0.5 },
+                { label: '免了，不收', value: 0 },
+              ]);
+              if (stopped) return;
+              if (a < 1) {
+                const v = a ? half : 0;
+                log(v ? `🤝 ${o.name}对${pl.name}放水，过路费只收 ¥${v}` : `🤝 ${o.name}免了${pl.name}的过路费`, pl);
+                if (v) pay(pl, o, v);
+                // 被你放水：心软的人更容易被打动，好胜的人不一定领情
+                if (pl.bias && Math.random() < 0.3 + pl.heart * 0.05 - pl.comp * 0.02) shift(pl, o, 1, `${o.name}放了自己一马`);
+                react(`${o.name}${v ? '只收了一半过路费' : '直接免了过路费'}，对${pl.name}放水`, pl.id);
+                return;
+              }
+            }
             const opts = [];
             if (pl.items.free) opts.push({ label: `🛡️ 用免租卡（还剩 ${pl.items.free} 张）`, value: 'free' });
             if (pl.items.steal && t.lv === 0 && !setOwned(t) && pl.money >= t.price) opts.push({ label: `🃏 用抢地卡，付 ¥${t.price} 给${o.name}，把地买过来`, value: 'steal' });
             let use = null;
             if (opts.length) {
               use = mine ? await ask([...opts, { label: `付过路费 ¥${r}`, value: null }])
-                : opts.some(x => x.value === 'steal') && pl.money - t.price > 250 ? 'steal'
-                : opts.some(x => x.value === 'free') && r >= 60 ? 'free' : null;
+                 : aiDefend(pl, t, o, r, opts);
               if (stopped) return;
             }
             if (use === 'free') {
@@ -3109,14 +3259,14 @@ annoy(o, pl, 2);
           log(`${pl.name}的宠物在运动会上掷出 ${d}，拿到奖金 ¥${d * 30}`, pl);
         } else if (t.k === 'park') {
                    const a = mine ? await ask([{ label: '捡 ¥50', value: 'money' }, { label: '随机拿一个道具', value: 'item' }])
-            : diff < 1 && Math.random() < 0.5 ? 'item' : 'money';
+            : aiPark(pl);
           if (stopped) return;
           if (a === 'money') { pl.money += 50; log(`${pl.name}在公园捡到 ¥50`, pl); }
           else { const k = pick(Object.keys(ITEMS)); pl.items[k]++; log(`${pl.name}在公园捡到一个${ITEMS[k].i}${ITEMS[k].n}`, pl); }
         } else if (t.k === 'bus') {
           if (evOn('storm')) return log(`台风天公交停运，${pl.name}只能干等`, pl);
           const to = pl.pos === 11 ? 21 : 11;
-          const yes = mine ? await ask([{ label: '花 ¥30 坐车去另一个公交站', value: true }, { label: '不坐', value: false }]) : pl.money > 300 && Math.random() < 0.5;
+           const yes = mine ? await ask([{ label: '花 ¥30 坐车去另一个公交站', value: true }, { label: '不坐', value: false }]) : aiBus(pl, to);
           if (stopped || !yes || pl.money < 30) return;
           pay(pl, null, 30);
           if (to < pl.pos) { pl.money += 200; log(`${pl.name}坐车路过起点，领了 ¥200`, pl); }
@@ -3124,7 +3274,7 @@ annoy(o, pl, 2);
           log(`${pl.name}坐公交到了另一边`, pl);
         } else if (t.k === 'lottery') {
           if (pl.money < 20) return log(`${pl.name}连彩票都买不起`, pl);
-          const yes = mine ? await ask([{ label: '花 ¥20 买一张彩票', value: true }, { label: '不买', value: false }]) : pl.money > 200 && Math.random() < 0.6;
+          const yes = mine ? await ask([{ label: '花 ¥20 买一张彩票', value: true }, { label: '不买', value: false }]) : aiLottery(pl);
           if (stopped || !yes) return;
           pay(pl, null, 20);
           const r = Math.random(), win = r < 0.05 ? 500 : r < 0.2 ? 150 : r < 0.55 ? 50 : 0;
@@ -3144,7 +3294,7 @@ annoy(o, pl, 2);
           if (!can.length) return log(`${pl.name}逛了逛道具店，什么都买不起`, pl);
           const k = mine
             ? await ask([...can.map(([k, v]) => ({ label: `买${v.i}${v.n}（¥${v.price}）`, value: k })), { label: '不买', value: null }])
-                       : aiShop(pl, can);
+                      : await aiShop(pl, can);
           if (stopped) return;
           if (!k) return log(`${pl.name}在道具店逛了一圈，没买`, pl);
           pl.money -= ITEMS[k].price; pl.items[k]++;
@@ -3168,7 +3318,7 @@ annoy(o, pl, 2);
           if (pl.id === 'user') {
             const a = await ask([{ label: '等一轮', value: 'wait' }, ...(pl.money >= 50 ? [{ label: '花 ¥50 提前出院', value: 'pay' }] : [])]);
             if (a === 'pay') { pay(pl, null, 50); pl.skip = 0; log(`${pl.name}花 ¥50 让宠物提前出院`, pl); }
-          } else if (pl.money > 600 && Math.random() < 0.6) { pay(pl, null, 50); pl.skip = 0; log(`${pl.name}花 ¥50 让宠物提前出院`, pl); }
+           } else if (aiBail(pl)) { pay(pl, null, 50); pl.skip = 0; log(`${pl.name}花 ¥50 让宠物提前出院`, pl); }
           if (pl.skip) { pl.skip--; log(`${pl.name}的宠物还在住院，这轮休息`, pl); await W8(1000); return; }
         }
         if (pl.nap) { pl.nap = 0; log(`💤 ${pl.name}的宠物被催眠了，这一轮睡过去了`, pl); await W8(1000); return; }
@@ -3212,9 +3362,9 @@ annoy(o, pl, 2);
           actBox(`<p class="mono-wait">${esc(pl.name)}在想……</p>`);
           await W8(800);
           const c = aiCard(pl);
-          if (c) { playCard(pl, c.k, c.tg); await W8(700); }
+          if (c) { think(pl, cardWhy(pl, c)); await W8(500); playCard(pl, c.k, c.tg); await W8(700); }
           if (pl.items.remote) { const v = aiRemote(pl); if (v) { pl.items.remote--; fixed = v; } }
-          if (!fixed && pl.items.double && Math.random() < 0.3) { pl.items.double--; two = true; }
+          if (!fixed && pl.items.double && aiDouble(pl)) { pl.items.double--; two = true; }
         }
         if (stopped || pl.out) return;
         let n;
