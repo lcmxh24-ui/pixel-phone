@@ -870,7 +870,7 @@ ${recent ? '。最近：' + recent : ''}` };
   // 宠物现在在谁家：串门中就是对方家，否则是自己家
   loc(p, now = Date.now()) { return p.visit && p.visit.until > now ? p.visit.host : this.homeOf(p); },
   hostName(h) { return h === this.me() ? '我' : this.who(h); },
-  yardPets() { const me = this.me(); return this.list.filter(p => this.loc(p) === me).slice(0, 10); },
+  yardPets() { const me = this.me(); return this.list.filter(p => this.loc(p) === me).slice(0, 20); },
 
     mountYard() {
     const cv = document.createElement('canvas');
