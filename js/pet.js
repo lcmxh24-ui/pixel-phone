@@ -2436,7 +2436,7 @@ const PetGames = {
 - 再看他和每个人真实的相处模式：最近关系有什么变化，有没有没说开的事、在意对方却不好意思、刚闹过别扭、互相较劲惯了、一直照顾对方，等等。这些大多和游戏无关，但会影响他玩的时候对谁手下留情、对谁不客气。
 - 不要套刻板印象：关系好不等于放水，好胜的人可能偏要赢最熟的人；关系一般也不等于针对。铁面无私的人也可能有一两个例外，心软的人也会有不想让的人。
 - 没有明显理由就写 0，别硬编。
-
+- 心态和原因都用中文写，聊天记录里的外语只是原文。
 【输出格式】
 每个角色先写一行：名字｜胜负心：0到10｜心软：0到10｜心态：一句话（20 字以内）
 再对其他每个人各写一行：名字→对象：-3到3的整数｜原因（15 字以内）
@@ -2784,7 +2784,7 @@ else s += ' · ' + ({
 talkCtx && `【开局前大家最近的聊天，玩的时候可以自然提起】\n${talkCtx}`,
 ...cs.map(c => memCtx[c.id]).filter(Boolean),
           ...cs.map(c => `【${c.name}的设定】\n${(c.persona || '（见世界设定）').slice(0, 800)}\n和${me.name}的关系：${getRel(pid, c.id).desc || '认识'}`),
-           `【要求】\n- 每行一条，格式：名字：内容。名字只能是${names.join('、')}，绝对不要替${me.name}说话。\n- 一共 1 到 5 条，都很短，像打游戏时随手打的字：得意、心疼钱、吐槽、起哄、互相拆台都可以，要符合各自的性格、和对方真实的相处模式，以及【大家现在的态度】。\n- 记忆和聊天记录里的事，只有当下真的碰到时才自然带一句，不要硬提。\n- 不写动作、神态和旁白。\n- 如果某人因为刚才的事或聊天内容，对某人的态度真的变了，另起一行写：#态度 名字>对象>变化>原因。变化是 -2 到 +2 的整数，正数是更想让着对方，负数是更想针对。要符合他的性格：较真、好胜的人被求情多半不为所动，但也不是绝对；心软的人容易被哄好，也会有不想让的时候。原因 15 字以内。大多数时候不用写。`,
+           `【要求】\n- 每行一条，格式：名字：内容。名字只能是${names.join('、')}，绝对不要替${me.name}说话。\n- 游戏聊天框里所有人一律用中文打字。聊天记录和记忆里的外语只是原文，不要跟着用外语。\n- 一共 1 到 5 条，都很短，像打游戏时随手打的字：得意、心疼钱、吐槽、起哄、互相拆台都可以，要符合各自的性格、和对方真实的相处模式，以及【大家现在的态度】。\n- 记忆和聊天记录里的事，只有当下真的碰到时才自然带一句，不要硬提。\n- 不写动作、神态和旁白。\n- 如果某人因为刚才的事或聊天内容，对某人的态度真的变了，另起一行写：#态度 名字>对象>变化>原因。变化是 -2 到 +2 的整数，正数是更想让着对方，负数是更想针对。要符合他的性格：较真、好胜的人被求情多半不为所动，但也不是绝对；心软的人容易被哄好，也会有不想让的时候。原因 15 字以内。大多数时候不用写。`,
         ].filter(Boolean).join('\n\n');
  const recall = userText ? await recallFor(cs, userText) : '';
         const task = [
@@ -2944,7 +2944,18 @@ recall && `【${me.name}刚才这句话让人想起的事（只有本人知道�
         return null;
       };
  // ===== 角色的"思考"：困难模式按局面算，想法写进动态 =====
-      const think = (pl, text) => { if (text && pl.id !== 'user') log(`💭 ${pl.name}：${text}`, pl); };
+       const think = (pl, text) => {
+        if (!text || pl.id === 'user') return;
+        log(`💭 ${pl.name}：${text}`, pl);
+        // 也显示在聊天框里，灰色斜体。不放进 chat，别的角色看不到
+        const box = $u('#mono-msgs');
+        if (!box) return;
+        box.querySelector('.mono-wait')?.remove();
+        const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+        box.insertAdjacentHTML('beforeend', `<div class="mono-c" style="opacity:.6;font-style:italic">💭 ${esc(pl.name)}心里想：${esc(text)}</div>`);
+        while (box.children.length > 40) box.firstElementChild.remove();
+        if (nearBottom) box.scrollTop = box.scrollHeight;
+      };
       const handN = pl => Object.values(pl.items).reduce((a, b) => a + b, 0);
       const handText = pl => Object.entries(pl.items).filter(([, v]) => v).map(([k, v]) => `${ITEMS[k].n}×${v}`).join('、') || '没有道具';
       const ITEM_DESC = { remote: '下次自己指定走几步', double: '下次掷两个骰子', free: '免一次过路费', steal: '把别人没盖房的地买过来' };
@@ -2981,7 +2992,7 @@ recall && `【${me.name}刚才这句话让人想起的事（只有本人知道�
         const c = charById(pl.id);
         const att = Object.entries(pl.bias || {}).filter(([, v]) => v).map(([id, v]) => `${v > 0 ? '想让着' : '想针对'}${byId(id)?.name}`).join('，');
         const system = `你在替${pl.name}决定宠物大富翁里在道具店买什么。${pl.name}的性格：${(c?.persona || '（无）').slice(0, 200)}
-按他的性格和局面盘算，想法要像他自己心里嘀咕的话。
+按他的性格和局面盘算，想法要像他自己心里嘀咕的话，用中文写。
 只输出一行：买：道具名｜心里想的话（20 字以内，用他的口吻）。不买就写：不买｜心里想的话`;
         const task = `第 ${round}/${MAX} 轮。${pl.name}现金 ¥${pl.money}，手里：${handText(pl)}。${pl.mood ? '这局心态：' + pl.mood + '。' : ''}${att ? '态度：' + att + '。' : ''}
 局面：${standing(6)}
