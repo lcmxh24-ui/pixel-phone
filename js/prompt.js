@@ -313,6 +313,7 @@ const Prompt = {
     const wb = WB.build(ids, WB.scan(before) + '\n' + hint);
     const vars = {
       ...this.baseVars(pid, ts),
+      天气: this.dayText(ts) === this.dayText(Date.now()) ? Weather.text() : '',
       角色: names.join('、'), char: names.join('、'),
       角色设定: multi ? chars.map(c => `· ${c.name}：${c.persona || '（无）'}`).join('\n\n') : (chars[0].persona || ''),
       记忆: memText,
@@ -336,7 +337,7 @@ const Prompt = {
       rec && '【其他在场的人最近的聊天】\n' + rec,
       multi && `【在场的人】${pname}、${names.join('、')}。每个人都要有符合自己性格的表现，戏份不用一样多。`,
       hint && '【这段剧情大概是】\n' + hint,
-      `【剧情里的手机消息】如果剧情里有人用手机给${pname}发了消息（比如见面前说"我到了"、分开后报平安），每条单独一行写：[消息]时:分 名字：内容。时间是今天的具体时间，不能晚于${ChatUI.timeLabel(Date.now())}。名字只能是${names.join('、')}，不替${pname}发消息。语音写成 [消息]时:分 名字：[语音]内容。没有就不写，正文里也不要重复这些消息。`,
+      `【剧情里的手机消息】如果剧情里有人用手机给${pname}发了消息（比如见面前说"我到了"、分开后报平安），每条单独一行写：[消息]时:分 名字：内容。时间是剧情当天（${this.dayText(ts)}）的具体时间${this.dayText(ts) === this.dayText(Date.now()) ? '，不能晚于' + ChatUI.timeLabel(Date.now()) : ''}。名字只能是${names.join('、')}，不替${pname}发消息。语音写成 [消息]时:分 名字：[语音]内容。没有就不写，正文里也不要重复这些消息。`,
       `请写出${nowText(ts)}发生的线下剧情。`,
     ].filter(Boolean).join('\n\n');
     return { system, messages: [{ role: 'user', content: task }] };

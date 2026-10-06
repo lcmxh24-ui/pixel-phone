@@ -1048,9 +1048,11 @@ const Offline = {
     const others = S.chars.filter(c => c.id !== main.id);
     const d = new Date();
     const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+const ymd = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
         const tip = { ai: '剧情方向（可以留空，AI 会参考聊天记录）', me: '发生了什么（可以加手机消息：[消息]14:30 名字：内容，自己发的写 我）' };
     const { el, close } = modal(`<h3>线下 · 和${esc(main.name)}</h3>
-      <label class="field"><span>今天几点发生的</span><input type="time" id="off-t" value="${hm}"></label>
+       <label class="field"><span>哪天发生的</span><input type="date" id="off-d" value="${ymd}" max="${ymd}"></label>
+      <label class="field"><span>几点发生的</span><input type="time" id="off-t" value="${hm}"></label>
       <div class="field"><span>还有谁在场（可多选，不选就是只有你们俩）</span>
         ${others.length ? `<input type="search" id="off-q" placeholder="搜索名字" aria-label="搜索角色">
         <div class="flex" style="gap:6px;margin:6px 0">
@@ -1100,10 +1102,13 @@ const Offline = {
       const a = e.target.closest('[data-a]')?.dataset.a;
       if (a === 'no') return close();
       if (a !== 'ok') return;
-      const t = $('#off-t', el).value, text = $('#off-c', el).value.trim();
+      const day = $('#off-d', el).value, t = $('#off-t', el).value, text = $('#off-c', el).value.trim();
+      if (!day) return toast('选一下日期');
       if (!t) return toast('选一下时间');
+      const [y, mo, dd] = day.split('-').map(Number);
       const [h, mi] = t.split(':').map(Number);
-      const ts = new Date().setHours(h, mi, 0, 0);
+      // 用选的那天加上选的几点（月份要减 1，这是 JS 的规矩）
+      const ts = new Date(y, mo - 1, dd, h, mi, 0, 0).getTime();
       if (ts > Date.now()) return toast('这个时间还没到');
       if (mode === 'me' && !text) return toast('写一下发生了什么');
       const ids = [main.id, ...picked()];
